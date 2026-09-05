@@ -1,340 +1,567 @@
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 
-from ..keyboards.settings_menu import welcome_settings_keyboard
-from ..keyboards.chat_menu import welcome_chat_picker_keyboard
+from ..keyboards.welcome_menu import (
+    welcome_editor_keyboard,
+    welcome_timing_keyboard,
+    welcome_buttons_keyboard,
+    welcome_chat_picker_keyboard,
+)
 
 router = Router()
 
-# FSM states for the welcome editor. The state machine intentionally has
-# just two phases: "in the menu" (no state) and "collecting media or text".
-# All edits are saved immediately so a refresh never loses work.
+
 class WelcomeStates(StatesGroup):
     editing_text = State()
     waiting_media = State()
+    waiting_btn_text = State()
+    waiting_btn_url = State()
+    waiting_custom_delay = State()
 
 
-# --------------------------------------------------------------------------- #
-# /welcome — entry point. Always starts by asking which chat to configure.
-# --------------------------------------------------------------------------- #
-@router.message(Command('welcome'))
-async def welcome_command(message: Message, chat_repo):
-    """Entry: show chat picker. If 1 chat, jump straight to editor."""
-    user_id = message.from_user.id
-    chats = await chat_repo.get_by_admin(user_id)
-    if not chats:
-        return await message.answer(
-            "You don't have any connected chats yet.\n"
-            "Add me to a group or channel first via /start."
-        )
-    if len(chats) == 1:
-        chat = chats[0]
-        return await _show_welcome_editor(message, chat_repo, chat['chat_id'])
-    await message.answer(
-        "👋 <b>Welcome Message Setup</b>\n\n"
-        "Select the group or channel you want to configure the welcome "
-        "message for:",
-        reply_markup=welcome_chat_picker_keyboard(chats),
-    )
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _get_welcome_settings(chat_repo, chat_id: int) -> dict:
+    """Load welcome settings from chat_settings collection with defaults."""
+    settings = await chat_repo.get_chat_settings(chat_id) or {}
+    return {
+        "welcome_enabled": settings.get("welcome_enabled", True),
+        "welcome_trigger": settings.get("welcome_trigger", "on_approval"),
+        "welcome_delay_seconds": settings.get("welcome_delay_seconds", 0),
+        "welcome_text": settings.get("welcome_text", ""),
+        "welcome_media_file_id": settings.get("welcome_media_file_id", ""),
+        "welcome_media_type": settings.get("welcome_media_type", ""),
+        "welcome_buttons": settings.get("welcome_buttons", []),
+        "welcome_parse_mode": settings.get("welcome_parse_mode", "HTML"),
+    }
 
 
-@router.callback_query(F.data == 'menu:welcome')
-async def welcome_menu_callback(callback: CallbackQuery, chat_repo):
-    """Same picker, reached from the main-menu '👋 Welcome' button."""
-    user_id = callback.from_user.id
-    chats = await chat_repo.get_by_admin(user_id)
-    if not chats:
-        return await callback.answer("No connected chats.", show_alert=True)
-    if len(chats) == 1:
-        chat = chats[0]
-        return await _show_welcome_editor(
-            callback.message, chat_repo, chat['chat_id'], edit=True, bot=callback.bot
-        )
-    await callback.message.edit_text(
-        "👋 <b>Welcome Message Setup</b>\n\n"
-        "Select the group or channel you want to configure:",
-        reply_markup=welcome_chat_picker_keyboard(chats),
-    )
-    await callback.answer()
-
-
-# --------------------------------------------------------------------------- #
-# Chat picked → show the editor keyboard.
-# --------------------------------------------------------------------------- #
-@router.callback_query(F.data.startswith('welcome:pick:'))
-async def welcome_pick_callback(callback: CallbackQuery, chat_repo):
-    chat_id = int(callback.data.split(':')[2])
-    await _show_welcome_editor(
-        callback.message, chat_repo, chat_id, edit=True, bot=callback.bot
-    )
-    await callback.answer()
-
-
-# --------------------------------------------------------------------------- #
-# Editor keyboard (also reachable from chat_action_keyboard via
-# settings:welcome:<chat_id> for parity with the old flow).
-# --------------------------------------------------------------------------- #
-@router.callback_query(F.data.startswith('settings:welcome:'))
-async def welcome_settings_callback(callback: CallbackQuery, chat_repo):
-    chat_id = int(callback.data.split(':')[2])
-    await _show_welcome_editor(
-        callback.message, chat_repo, chat_id, edit=True, bot=callback.bot
-    )
-    await callback.answer()
-
-
-async def _show_welcome_editor(target, chat_repo, chat_id, *, edit=False, bot=None):
-    """Render the editor. `target` is a Message; `edit` switches edit_text vs answer."""
+async def _render_editor(target, chat_repo, chat_id: int, *, edit: bool = False):
+    """Render the welcome editor panel. target = Message object."""
     chat = await chat_repo.get(chat_id)
     if not chat:
-        text = "Chat not found."
-        if edit:
-            return await target.edit_text(text)
-        return await target.answer(text)
+        txt = "❌ Chat not found."
+        return await (target.edit_text(txt) if edit else target.answer(txt))
 
-    welcome = chat.get('welcome_settings', {}) or {}
-    # Buttons live in the chat_settings doc (legacy field); the editor and
-    # the renderer both read them from there. We pull both sources so the
-    # "✅" indicator reflects what the admin has actually configured.
-    settings_doc = await chat_repo.get_chat_settings(chat_id) or {}
-    buttons = settings_doc.get('welcome_buttons', []) or chat.get('welcome_buttons', []) or []
-    has_text = bool(welcome.get('text'))
-    has_media = bool(welcome.get('media_file_id'))
-    has_buttons = bool(buttons)
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    title = chat.get("title", "this chat")
 
-    title = chat.get('title', 'this chat')
     body = (
         f"👋 <b>Welcome Editor — {title}</b>\n\n"
-        "Configure what newly approved members receive.\n"
+        "Configure what newly-approved members receive.\n"
         "✅ marks what's already set.\n\n"
-        "Tip: text supports <b>bold</b>, <i>italic</i>, <code>code</code>, "
-        "links, and premium emoji "
-        '(<code>&lt;tg-emoji emoji-id="12345"&gt;⭐&lt;/tg-emoji&gt;</code>).'
+        "<b>Current timing:</b> "
+        + _trigger_summary(ws["welcome_trigger"], ws["welcome_delay_seconds"])
     )
-    markup = welcome_settings_keyboard(
+
+    markup = welcome_editor_keyboard(
         chat_id=chat_id,
-        has_text=has_text,
-        has_media=has_media,
-        has_buttons=has_buttons,
+        enabled=ws["welcome_enabled"],
+        has_text=bool(ws["welcome_text"]),
+        has_media=bool(ws["welcome_media_file_id"]),
+        btn_count=len(ws["welcome_buttons"]),
+        trigger=ws["welcome_trigger"],
+        delay=ws["welcome_delay_seconds"],
     )
+
     if edit:
         return await target.edit_text(body, reply_markup=markup)
     return await target.answer(body, reply_markup=markup)
 
 
-# --------------------------------------------------------------------------- #
-# Edit text
-# --------------------------------------------------------------------------- #
-@router.callback_query(F.data.startswith('welcome:edit_text:'))
-async def start_edit_welcome_text(callback: CallbackQuery, state: FSMContext, chat_repo):
-    chat_id = int(callback.data.split(':')[2])
-    chat = await chat_repo.get(chat_id)
-    current = (chat.get('welcome_settings') or {}).get('text', '')
+def _trigger_summary(trigger: str, delay: int) -> str:
+    if trigger == "on_request":
+        return "📩 When request arrives"
+    if delay == 300:
+        return "⏱ 5 min after approval"
+    if delay == 600:
+        return "⏱ 10 min after approval"
+    if delay == 1800:
+        return "⏱ 30 min after approval"
+    if delay > 0:
+        return f"⏱ {delay // 60} min after approval"
+    return "✅ On approval"
+
+
+def _build_preview_keyboard(buttons: list) -> InlineKeyboardMarkup | None:
+    if not buttons:
+        return None
+    rows: dict[int, list] = {}
+    for btn in buttons:
+        row_idx = int(btn.get("row", 1))
+        rows.setdefault(row_idx, []).append(
+            InlineKeyboardButton(text=btn["text"][:64], url=btn.get("url"))
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[rows[i] for i in sorted(rows)])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Entry points
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.message(Command("welcome"))
+async def welcome_command(message: Message, chat_repo):
+    user_id = message.from_user.id
+    chats = await chat_repo.get_by_admin(user_id)
+    if not chats:
+        return await message.answer(
+            "You don't have any connected chats yet.\nAdd me to a group or channel first via /start."
+        )
+    if len(chats) == 1:
+        return await _render_editor(message, chat_repo, chats[0]["chat_id"])
+    await message.answer(
+        "👋 <b>Welcome Message Setup</b>\n\nSelect the group or channel to configure:",
+        reply_markup=welcome_chat_picker_keyboard(chats),
+    )
+
+
+@router.callback_query(F.data == "menu:welcome")
+async def welcome_menu_callback(callback: CallbackQuery, chat_repo):
+    user_id = callback.from_user.id
+    chats = await chat_repo.get_by_admin(user_id)
+    if not chats:
+        return await callback.answer("No connected chats.", show_alert=True)
+    if len(chats) == 1:
+        await _render_editor(callback.message, chat_repo, chats[0]["chat_id"], edit=True)
+        return await callback.answer()
+    await callback.message.edit_text(
+        "👋 <b>Welcome Message Setup</b>\n\nSelect the group or channel to configure:",
+        reply_markup=welcome_chat_picker_keyboard(chats),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("welcome:pick:"))
+async def welcome_pick_chat(callback: CallbackQuery, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    await _render_editor(callback.message, chat_repo, chat_id, edit=True)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("welcome:edit:"))
+async def welcome_edit_callback(callback: CallbackQuery, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    await _render_editor(callback.message, chat_repo, chat_id, edit=True)
+    await callback.answer()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Toggle enabled
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("welcome:toggle:"))
+async def toggle_welcome(callback: CallbackQuery, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    new_val = not ws["welcome_enabled"]
+    await chat_repo.upsert_settings(chat_id, {"welcome_enabled": new_val})
+    await _render_editor(callback.message, chat_repo, chat_id, edit=True)
+    await callback.answer(f"Welcome {'enabled ✅' if new_val else 'disabled ❌'}")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Edit Text
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("welcome:edit_text:"))
+async def start_edit_text(callback: CallbackQuery, state: FSMContext, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    current = ws["welcome_text"]
+    snippet = (current[:200] + "…" if len(current) > 200 else current) if current else "(empty)"
 
     await state.set_state(WelcomeStates.editing_text)
     await state.update_data(chat_id=chat_id)
-
-    snippet = current[:200] + ('…' if len(current) > 200 else '') if current else '(empty)'
     await callback.message.answer(
         "✏️ <b>Send the new welcome message text.</b>\n\n"
-        "<b>Formatting supported:</b>\n"
-        "• <code>&lt;b&gt;bold&lt;/b&gt;</code>, <code>&lt;i&gt;italic&lt;/i&gt;</code>, "
-        "<code>&lt;u&gt;underline&lt;/u&gt;</code>, <code>&lt;s&gt;strike&lt;/s&gt;</code>\n"
-        "• <code>&lt;code&gt;monospace&lt;/code&gt;</code>\n"
-        "• Links: <code>&lt;a href=\"https://example.com\"&gt;text&lt;/a&gt;</code>\n"
-        "• Premium emoji: "
-        '<code>&lt;tg-emoji emoji-id="5368324170671202286"&gt;⭐&lt;/tg-emoji&gt;</code>\n\n'
+        "<b>Supported variables:</b>\n"
+        "• <code>{first_name}</code> — member's first name\n"
+        "• <code>{last_name}</code> — last name\n"
+        "• <code>{username}</code> — @username\n"
+        "• <code>{chat_title}</code> — group/channel name\n\n"
+        "<b>Formatting:</b> HTML tags supported "
+        "(<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;a href=…&gt;</code>, "
+        "premium emoji <code>&lt;tg-emoji emoji-id=\"…\"&gt;⭐&lt;/tg-emoji&gt;</code>)\n\n"
         f"<b>Current:</b>\n{snippet}\n\n"
         "Send /cancel to abort."
     )
     await callback.answer()
 
 
-@router.message(WelcomeStates.editing_text, Command('cancel'))
+@router.message(WelcomeStates.editing_text, Command("cancel"))
 async def cancel_edit_text(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer("Edit cancelled.")
+    await message.answer("Cancelled.")
 
 
 @router.message(WelcomeStates.editing_text)
 async def receive_welcome_text(message: Message, state: FSMContext, chat_repo):
-    # Allow text messages (with or without entities). For messages with media
-    # (photo/video/document), aiogram populates the caption in .caption;
-    # .text will be None — we treat that as "send the text only, not media".
-    text = message.text or message.caption
-    if text is None:
-        return await message.answer(
-            "Please send text (or use 🖼 Set Media for photo/video)."
-        )
+    text = message.html_text or message.text or message.caption or ""
+    if not text:
+        return await message.answer("Please send text. Or /cancel.")
 
     data = await state.get_data()
-    chat_id = data['chat_id']
-
-    chat = await chat_repo.get(chat_id) or {}
-    settings = chat.get('welcome_settings') or {}
-    # Use html_text so Telegram re-parses the user-supplied entities; if the
-    # user pasted plain text this is a no-op.
-    settings['text'] = message.html_text if message.text else (message.caption or '')
-    await chat_repo.update_settings(chat_id, {'welcome_settings': settings})
-
+    chat_id = data["chat_id"]
+    await chat_repo.upsert_settings(chat_id, {"welcome_text": text})
     await state.clear()
-    await _show_welcome_editor(message, chat_repo, chat_id, edit=False)
+    await message.answer("✅ Welcome text saved!")
+    await _render_editor(message, chat_repo, chat_id)
 
 
-# --------------------------------------------------------------------------- #
-# Set media (photo or video)
-# --------------------------------------------------------------------------- #
-@router.callback_query(F.data.startswith('welcome:set_media:'))
+# ──────────────────────────────────────────────────────────────────────────────
+# Set Media
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("welcome:set_media:"))
 async def start_set_media(callback: CallbackQuery, state: FSMContext):
-    chat_id = int(callback.data.split(':')[2])
+    chat_id = int(callback.data.split(":")[2])
     await state.set_state(WelcomeStates.waiting_media)
     await state.update_data(chat_id=chat_id)
     await callback.message.answer(
-        "🖼 <b>Send the photo or video</b> to attach to your welcome message.\n"
-        "The text will come from the welcome text editor; if you send a "
-        "caption, it will replace the existing text.\n\n"
+        "🖼 <b>Send a photo, video, GIF or document</b> to attach to the welcome message.\n\n"
+        "• If you include a caption, it will <b>replace</b> the current welcome text.\n"
+        "• HTML formatting in captions is preserved.\n\n"
         "Send /cancel to abort."
     )
     await callback.answer()
 
 
-@router.message(WelcomeStates.waiting_media, Command('cancel'))
+@router.message(WelcomeStates.waiting_media, Command("cancel"))
 async def cancel_set_media(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Cancelled.")
 
 
 @router.message(WelcomeStates.waiting_media)
-async def receive_welcome_media(message: Message, state: FSMContext, chat_repo):
-    data = await state.get_data()
-    chat_id = data['chat_id']
-
+async def receive_media(message: Message, state: FSMContext, chat_repo):
     file_id: str | None = None
     media_type: str | None = None
+
     if message.photo:
-        file_id = message.photo[-1].file_id  # largest size
-        media_type = 'photo'
+        file_id = message.photo[-1].file_id
+        media_type = "photo"
     elif message.video:
         file_id = message.video.file_id
-        media_type = 'video'
+        media_type = "video"
     elif message.animation:
         file_id = message.animation.file_id
-        media_type = 'animation'
+        media_type = "animation"
     elif message.document:
         file_id = message.document.file_id
-        media_type = 'document'
+        media_type = "document"
     else:
+        return await message.answer("Please send a photo, video, GIF or document. Or /cancel.")
+
+    data = await state.get_data()
+    chat_id = data["chat_id"]
+
+    updates: dict = {
+        "welcome_media_file_id": file_id,
+        "welcome_media_type": media_type,
+    }
+    # If caption provided, save as welcome text too
+    if message.caption:
+        updates["welcome_text"] = message.html_text or message.caption
+
+    await chat_repo.upsert_settings(chat_id, updates)
+    await state.clear()
+    await message.answer(f"✅ {media_type.capitalize()} saved!")
+    await _render_editor(message, chat_repo, chat_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Remove Media
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("welcome:remove_media:"))
+async def remove_media(callback: CallbackQuery, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    await chat_repo.upsert_settings(chat_id, {
+        "welcome_media_file_id": "",
+        "welcome_media_type": "",
+    })
+    await _render_editor(callback.message, chat_repo, chat_id, edit=True)
+    await callback.answer("Media removed.")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Timing / Trigger
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("welcome:timing:"))
+async def show_timing(callback: CallbackQuery, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    await callback.message.edit_text(
+        "⏰ <b>Welcome Message Timing</b>\n\n"
+        "Choose <b>when</b> the welcome message is sent to new members:",
+        reply_markup=welcome_timing_keyboard(
+            chat_id=chat_id,
+            current_trigger=ws["welcome_trigger"],
+            current_delay=ws["welcome_delay_seconds"],
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("welcome:trigger:"))
+async def set_trigger(callback: CallbackQuery, state: FSMContext, chat_repo):
+    # format: welcome:trigger:<chat_id>:<mode>  or  welcome:trigger:<chat_id>:delay:<seconds>
+    parts = callback.data.split(":")
+    chat_id = int(parts[2])
+    mode = parts[3]
+
+    if mode == "custom":
+        await state.set_state(WelcomeStates.waiting_custom_delay)
+        await state.update_data(chat_id=chat_id)
+        await callback.message.answer(
+            "✏️ Enter the delay in <b>minutes</b> (e.g. <code>15</code> for 15 min):\n"
+            "Max 7 days (10080 min). Send /cancel to abort."
+        )
+        return await callback.answer()
+
+    if mode == "delay":
+        seconds = int(parts[4])
+        await chat_repo.upsert_settings(chat_id, {
+            "welcome_trigger": "delayed",
+            "welcome_delay_seconds": seconds,
+        })
+        label = _trigger_summary("delayed", seconds)
+    elif mode == "on_request":
+        await chat_repo.upsert_settings(chat_id, {
+            "welcome_trigger": "on_request",
+            "welcome_delay_seconds": 0,
+        })
+        label = _trigger_summary("on_request", 0)
+    else:  # on_approval
+        await chat_repo.upsert_settings(chat_id, {
+            "welcome_trigger": "on_approval",
+            "welcome_delay_seconds": 0,
+        })
+        label = _trigger_summary("on_approval", 0)
+
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    await callback.message.edit_text(
+        "⏰ <b>Welcome Message Timing</b>\n\n"
+        "Choose <b>when</b> the welcome message is sent to new members:",
+        reply_markup=welcome_timing_keyboard(
+            chat_id=chat_id,
+            current_trigger=ws["welcome_trigger"],
+            current_delay=ws["welcome_delay_seconds"],
+        ),
+    )
+    await callback.answer(f"Timing set: {label}")
+
+
+@router.message(WelcomeStates.waiting_custom_delay, Command("cancel"))
+async def cancel_custom_delay(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Cancelled.")
+
+
+@router.message(WelcomeStates.waiting_custom_delay)
+async def receive_custom_delay(message: Message, state: FSMContext, chat_repo):
+    if not message.text or not message.text.strip().isdigit():
+        return await message.answer("Please enter a valid number of minutes. Or /cancel.")
+
+    minutes = int(message.text.strip())
+    if minutes < 1 or minutes > 10080:
+        return await message.answer("Must be between 1 and 10080 minutes (7 days). Or /cancel.")
+
+    data = await state.get_data()
+    chat_id = data["chat_id"]
+    seconds = minutes * 60
+    await chat_repo.upsert_settings(chat_id, {
+        "welcome_trigger": "delayed",
+        "welcome_delay_seconds": seconds,
+    })
+    await state.clear()
+    await message.answer(f"✅ Custom delay set: {minutes} min after approval.")
+    await _render_editor(message, chat_repo, chat_id)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Button Manager
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("welcome:buttons:"))
+async def show_buttons(callback: CallbackQuery, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    buttons = ws["welcome_buttons"]
+    count = len(buttons)
+    await callback.message.edit_text(
+        f"🔘 <b>Inline Buttons</b> ({count}/10)\n\n"
+        + (
+            "\n".join(
+                f"{i+1}. <b>{b['text']}</b> → <code>{b.get('url','')}</code>"
+                for i, b in enumerate(buttons)
+            )
+            if buttons
+            else "No buttons set yet."
+        )
+        + "\n\nTap a button to remove it, or add a new one.",
+        reply_markup=welcome_buttons_keyboard(chat_id, buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("welcome:btn_add:"))
+async def start_add_button(callback: CallbackQuery, state: FSMContext, chat_repo):
+    chat_id = int(callback.data.split(":")[2])
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    if len(ws["welcome_buttons"]) >= 10:
+        return await callback.answer("Maximum 10 buttons.", show_alert=True)
+    await state.set_state(WelcomeStates.waiting_btn_text)
+    await state.update_data(chat_id=chat_id)
+    await callback.message.answer(
+        "🔘 <b>Add Button — Step 1/2</b>\n\nSend the <b>button text</b> (max 64 chars):\n\n"
+        "Send /cancel to abort."
+    )
+    await callback.answer()
+
+
+@router.message(WelcomeStates.waiting_btn_text, Command("cancel"))
+async def cancel_btn_text(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Cancelled.")
+
+
+@router.message(WelcomeStates.waiting_btn_text)
+async def receive_btn_text(message: Message, state: FSMContext):
+    text = (message.text or "").strip()
+    if not text:
+        return await message.answer("Button text cannot be empty. Or /cancel.")
+    if len(text) > 64:
+        return await message.answer("Max 64 characters. Or /cancel.")
+    await state.update_data(btn_text=text)
+    await state.set_state(WelcomeStates.waiting_btn_url)
+    await message.answer(
+        f"🔘 <b>Add Button — Step 2/2</b>\n\nButton text: <b>{text}</b>\n\n"
+        "Now send the <b>URL</b> for this button (must start with https:// or http://):\n\n"
+        "Send /cancel to abort."
+    )
+
+
+@router.message(WelcomeStates.waiting_btn_url, Command("cancel"))
+async def cancel_btn_url(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Cancelled.")
+
+
+@router.message(WelcomeStates.waiting_btn_url)
+async def receive_btn_url(message: Message, state: FSMContext, chat_repo):
+    url = (message.text or "").strip()
+    if not url.startswith(("https://", "http://", "tg://")):
         return await message.answer(
-            "Please send a photo, video, GIF, or document. Or /cancel."
+            "Must be a valid URL starting with https://, http://, or tg://\nOr /cancel."
         )
 
-    chat = await chat_repo.get(chat_id) or {}
-    settings = chat.get('welcome_settings') or {}
-    settings['media_file_id'] = file_id
-    settings['media_type'] = media_type
-    # If the user supplied a caption with the media, treat it as the new text
-    # (overwriting any prior text) — this is what the prompt promised.
-    if message.caption:
-        settings['text'] = message.html_text or message.caption
+    data = await state.get_data()
+    chat_id = data["chat_id"]
+    btn_text = data["btn_text"]
 
-    await chat_repo.update_settings(chat_id, {'welcome_settings': settings})
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    buttons = ws["welcome_buttons"]
+
+    # Determine row: put new button on last row or new row
+    last_row = max((b.get("row", 1) for b in buttons), default=0)
+    # If last row already has 3 buttons, start a new row
+    last_row_count = sum(1 for b in buttons if b.get("row") == last_row)
+    row = last_row + 1 if last_row_count >= 3 else max(last_row, 1)
+
+    buttons.append({"text": btn_text, "url": url, "row": row})
+    await chat_repo.upsert_settings(chat_id, {"welcome_buttons": buttons})
     await state.clear()
-    await _show_welcome_editor(message, chat_repo, chat_id, edit=False)
+
+    await message.answer(f"✅ Button added: <b>{btn_text}</b> → {url}")
+    await _render_editor(message, chat_repo, chat_id)
 
 
-# --------------------------------------------------------------------------- #
-# Preview — render the saved welcome message into the chat so the admin can
-# see exactly what new members will get. Premium emoji tags are sent through
-# as-is (Telegram re-renders them).
-# --------------------------------------------------------------------------- #
-@router.callback_query(F.data.startswith('welcome:preview:'))
-async def preview_welcome(callback: CallbackQuery, chat_repo, bot):
-    chat_id = int(callback.data.split(':')[2])
-    chat = await chat_repo.get(chat_id)
-    if not chat:
-        return await callback.answer("Chat not found.", show_alert=True)
+@router.callback_query(F.data.startswith("welcome:btn_remove:"))
+async def remove_button(callback: CallbackQuery, chat_repo):
+    parts = callback.data.split(":")
+    chat_id = int(parts[2])
+    index = int(parts[3])
 
-    welcome = chat.get('welcome_settings') or {}
-    text = welcome.get('text') or '👋 Welcome!'
-    media_id = welcome.get('media_file_id')
-    media_type = welcome.get('media_type', 'photo')
-    settings_doc = await chat_repo.get_chat_settings(chat_id) or {}
-    buttons = settings_doc.get('welcome_buttons', []) or chat.get('welcome_buttons', []) or []
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+    buttons = ws["welcome_buttons"]
+    if 0 <= index < len(buttons):
+        removed = buttons.pop(index)
+        await chat_repo.upsert_settings(chat_id, {"welcome_buttons": buttons})
+        await callback.answer(f"Removed: {removed['text']}")
+    else:
+        await callback.answer("Button not found.")
 
-    # Build keyboard from stored buttons (row/text/url).
-    markup = None
-    if buttons:
-        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-        rows: dict[int, list] = {}
-        for b in buttons:
-            row_idx = int(b.get('row', 1))
-            rows.setdefault(row_idx, []).append(
-                InlineKeyboardButton(text=b['text'][:64], url=b.get('url'))
+    # Refresh buttons panel
+    ws2 = await _get_welcome_settings(chat_repo, chat_id)
+    count = len(ws2["welcome_buttons"])
+    await callback.message.edit_text(
+        f"🔘 <b>Inline Buttons</b> ({count}/10)\n\n"
+        + (
+            "\n".join(
+                f"{i+1}. <b>{b['text']}</b> → <code>{b.get('url','')}</code>"
+                for i, b in enumerate(ws2["welcome_buttons"])
             )
-        markup = InlineKeyboardMarkup(inline_keyboard=[rows[i] for i in sorted(rows)])
+            if ws2["welcome_buttons"]
+            else "No buttons set yet."
+        )
+        + "\n\nTap a button to remove it, or add a new one.",
+        reply_markup=welcome_buttons_keyboard(chat_id, ws2["welcome_buttons"]),
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Preview
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.callback_query(F.data.startswith("welcome:preview:"))
+async def preview_welcome(callback: CallbackQuery, chat_repo, bot):
+    chat_id = int(callback.data.split(":")[2])
+    chat = await chat_repo.get(chat_id)
+    ws = await _get_welcome_settings(chat_repo, chat_id)
+
+    # Substitute variables with dummy data for preview
+    text = ws["welcome_text"] or "👋 Welcome!"
+    text = (
+        text
+        .replace("{first_name}", callback.from_user.first_name or "John")
+        .replace("{last_name}", callback.from_user.last_name or "Doe")
+        .replace("{username}", f"@{callback.from_user.username}" if callback.from_user.username else "@johndoe")
+        .replace("{chat_title}", (chat or {}).get("title", "Your Group"))
+        .replace("{user_id}", str(callback.from_user.id))
+    )
+
+    keyboard = _build_preview_keyboard(ws["welcome_buttons"])
+    media_id = ws["welcome_media_file_id"]
+    media_type = ws["welcome_media_type"]
+    user_id = callback.from_user.id
 
     try:
-        if media_id and media_type == 'photo':
-            await bot.send_photo(
-                chat_id=callback.from_user.id,
-                photo=media_id,
-                caption=text[:1024],
-                reply_markup=markup,
-            )
-        elif media_id and media_type == 'video':
-            await bot.send_video(
-                chat_id=callback.from_user.id,
-                video=media_id,
-                caption=text[:1024],
-                reply_markup=markup,
-            )
-        elif media_id and media_type == 'animation':
-            await bot.send_animation(
-                chat_id=callback.from_user.id,
-                animation=media_id,
-                caption=text[:1024],
-                reply_markup=markup,
-            )
-        elif media_id and media_type == 'document':
-            await bot.send_document(
-                chat_id=callback.from_user.id,
-                document=media_id,
-                caption=text[:1024],
-                reply_markup=markup,
-            )
+        if media_id and media_type == "photo":
+            await bot.send_photo(chat_id=user_id, photo=media_id,
+                                 caption=text[:1024] if text else None,
+                                 parse_mode="HTML", reply_markup=keyboard)
+        elif media_id and media_type == "video":
+            await bot.send_video(chat_id=user_id, video=media_id,
+                                 caption=text[:1024] if text else None,
+                                 parse_mode="HTML", reply_markup=keyboard)
+        elif media_id and media_type == "animation":
+            await bot.send_animation(chat_id=user_id, animation=media_id,
+                                     caption=text[:1024] if text else None,
+                                     parse_mode="HTML", reply_markup=keyboard)
+        elif media_id and media_type == "document":
+            await bot.send_document(chat_id=user_id, document=media_id,
+                                    caption=text[:1024] if text else None,
+                                    parse_mode="HTML", reply_markup=keyboard)
         else:
-            await bot.send_message(
-                chat_id=callback.from_user.id,
-                text=text[:4096],
-                reply_markup=markup,
-            )
+            await bot.send_message(chat_id=user_id, text=text[:4096],
+                                   parse_mode="HTML", reply_markup=keyboard)
+        await callback.answer("👁 Preview sent to your DM ⤵️")
     except Exception as e:
-        return await callback.answer(f"Preview failed: {e}", show_alert=True)
-    await callback.answer("Preview sent to your DM ⤵️")
-
-
-# --------------------------------------------------------------------------- #
-# Clear all welcome content for a chat.
-# --------------------------------------------------------------------------- #
-@router.callback_query(F.data.startswith('welcome:clear:'))
-async def clear_welcome(callback: CallbackQuery, chat_repo):
-    chat_id = int(callback.data.split(':')[2])
-    chat = await chat_repo.get(chat_id) or {}
-    settings = chat.get('welcome_settings') or {}
-    # Preserve only structural fields; drop text + media.
-    settings.pop('text', None)
-    settings.pop('media_file_id', None)
-    settings.pop('media_type', None)
-    await chat_repo.update_settings(chat_id, {'welcome_settings': settings})
-    # Buttons live in chat_settings (legacy field); clear them there too so
-    # the editor's ✅ indicator updates.
-    settings_doc = await chat_repo.get_chat_settings(chat_id) or {}
-    if 'welcome_buttons' in settings_doc:
-        await chat_repo.update_settings(chat_id, {'welcome_buttons': []})
-    await callback.answer("Welcome message cleared.")
-    await _show_welcome_editor(
-        callback.message, chat_repo, chat_id, edit=True, bot=callback.bot
-    )
+        await callback.answer(f"Preview failed: {str(e)[:100]}", show_alert=True)

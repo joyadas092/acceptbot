@@ -135,13 +135,19 @@ class ChatRepository:
         if settings:
             return settings
 
-        # Defaults reflect the refactor: welcome is on by default, sent on
-        # every approval, with no delay (the per-chat timer UI is gone).
+        # Defaults for new chats
         return {
             "chat_id": chat_id,
             "auto_approve": False,
-            "welcome_enabled": True,
-            "welcome_trigger": "on_approval",
             "captcha_enabled": False,
             "delay_seconds": 0,
+            # Welcome
+            "welcome_enabled": True,
+            "welcome_trigger": "on_approval",
+            "welcome_delay_seconds": 0,
+            "welcome_text": "",
+            "welcome_media_file_id": "",
+            "welcome_media_type": "",
+            "welcome_buttons": [],
+            "welcome_parse_mode": "HTML",
         }

@@ -32,7 +32,7 @@ async def welcome_command(message: Message, chat_repo):
         )
     if len(chats) == 1:
         chat = chats[0]
-        return await _show_welcome_editor(message, chat_repo, chat['id'])
+        return await _show_welcome_editor(message, chat_repo, chat['chat_id'])
     await message.answer(
         "👋 <b>Welcome Message Setup</b>\n\n"
         "Select the group or channel you want to configure the welcome "
@@ -51,7 +51,7 @@ async def welcome_menu_callback(callback: CallbackQuery, chat_repo):
     if len(chats) == 1:
         chat = chats[0]
         return await _show_welcome_editor(
-            callback.message, chat_repo, chat['id'], edit=True, bot=callback.bot
+            callback.message, chat_repo, chat['chat_id'], edit=True, bot=callback.bot
         )
     await callback.message.edit_text(
         "👋 <b>Welcome Message Setup</b>\n\n"

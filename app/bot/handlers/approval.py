@@ -10,6 +10,28 @@ class ApprovalStates(StatesGroup):
 
 router = Router()
 
+@router.callback_query(F.data == 'menu:approval')
+async def approval_menu_callback(callback: CallbackQuery, chat_repo):
+    user_id = callback.from_user.id
+    chats = await chat_repo.get_by_admin(user_id)
+    if not chats:
+        return await callback.answer("You don't have any connected chats.", show_alert=True)
+    
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    b = InlineKeyboardBuilder()
+    for c in chats:
+        c_id = c.get('chat_id')
+        title = c.get('title', 'Chat')
+        b.button(text=f"⚡ {title}", callback_data=f"settings:approval:{c_id}")
+    b.button(text="← Back", callback_data="menu:main")
+    b.adjust(1)
+    
+    await callback.message.edit_text(
+        "⚡ <b>Approval Settings</b>\n\nSelect a chat to configure its approval settings:",
+        reply_markup=b.as_markup()
+    )
+    await callback.answer()
+
 @router.callback_query(F.data.startswith('settings:approval:'))
 async def approval_settings_callback(callback: CallbackQuery, chat_repo):
     chat_id = int(callback.data.split(':')[2])

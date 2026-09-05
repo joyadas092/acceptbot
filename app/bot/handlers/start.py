@@ -88,3 +88,15 @@ async def main_menu_callback(
             "What would you like to do?"
         )
         await callback.message.edit_text(text, reply_markup=main_menu_keyboard(is_super_admin=is_super_admin))
+
+@router.callback_query(F.data == 'admin:main')
+@router.callback_query(F.data == 'menu:admin')
+async def admin_panel_from_menu(callback: CallbackQuery, is_super_admin: bool):
+    if not is_super_admin:
+        return await callback.answer("⛔ Access denied. You are not a super admin.", show_alert=True)
+    from ..keyboards.superadmin_menu import superadmin_main_keyboard
+    await callback.message.edit_text(
+        "👑 <b>Super Admin Panel</b>\n\nSelect an option to manage the system:",
+        reply_markup=superadmin_main_keyboard()
+    )
+    await callback.answer()

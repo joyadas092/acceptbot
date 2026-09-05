@@ -8,9 +8,8 @@ class AuthMiddleware(BaseMiddleware):
     Injects `is_super_admin: bool` into handler data.
     Also registers/updates user on every private message.
     """
-    def __init__(self, settings, user_service):
-        self.settings = settings
-        self.user_service = user_service
+    def __init__(self, super_admin_ids: list[int]):
+        self.super_admin_ids = super_admin_ids
 
     async def __call__(
         self,
@@ -20,23 +19,24 @@ class AuthMiddleware(BaseMiddleware):
     ) -> Any:
         user = data.get('event_from_user')
         if user and not user.is_bot:
-            is_super_admin = user.id in self.settings.super_admin_id_list
+            is_super_admin = user.id in self.super_admin_ids
             data['is_super_admin'] = is_super_admin
             
-            # Register/update user in background
-            username = user.username
-            first_name = user.first_name
-            last_name = user.last_name
-            language_code = user.language_code
-            
-            asyncio.create_task(
-                self.user_service.register_or_update_user(
-                    user_id=user.id,
-                    username=username,
-                    first_name=first_name,
-                    last_name=last_name,
-                    language_code=language_code
+            user_repo = data.get('user_repo')
+            if user_repo:
+                username = user.username
+                first_name = user.first_name
+                last_name = user.last_name
+                language_code = user.language_code
+                
+                asyncio.create_task(
+                    user_repo.upsert_user(
+                        user_id=user.id,
+                        username=username,
+                        first_name=first_name,
+                        last_name=last_name,
+                        language_code=language_code
+                    )
                 )
-            )
             
         return await handler(event, data)

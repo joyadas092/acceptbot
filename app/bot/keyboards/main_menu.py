@@ -15,12 +15,13 @@ def main_menu_keyboard(is_super_admin: bool = False) -> InlineKeyboardMarkup:
     builder.button(text="📊 Statistics", callback_data="menu:stats")
     builder.button(text="📖 Tutorial", callback_data="menu:tutorial")
     # Row 4
+    builder.button(text="⚡ Approval", callback_data="menu:approval")
     builder.button(text="💳 Plan", callback_data="menu:plan")
-    builder.button(text="❓ Help", callback_data="menu:help")
     # Row 5
+    builder.button(text="❓ Help", callback_data="menu:help")
     builder.button(text="🔄 Refresh", callback_data="menu:refresh")
 
-    builder.adjust(2, 2, 2, 2, 1)
+    builder.adjust(2, 2, 2, 2, 2)
 
     if is_super_admin:
         # builder.button() returns the builder, not a button. The correct

@@ -1,18 +1,20 @@
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-def broadcast_target_keyboard(chat_id: int | None, chats: list[dict]) -> InlineKeyboardMarkup:
-    """Choose broadcast target."""
+def broadcast_picker_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
+    """Picker for choosing which chat to broadcast to."""
     builder = InlineKeyboardBuilder()
-
-    if chat_id:
-        builder.button(text="📢 This Channel", callback_data=f"broadcast:target:chat:{chat_id}")
-
-    builder.button(text="🌐 All My Channels", callback_data="broadcast:target:all")
-
+    
+    for chat in chats:
+        title = chat.get('title', 'Unknown Chat')
+        chat_id = chat.get('chat_id')
+        builder.button(text=f"📢 {title}", callback_data=f"broadcast:pick:{chat_id}")
+        
+    builder.button(text="🌐 All Channels", callback_data="broadcast:pick:all")
     builder.adjust(1)
+    
     builder.row(
-        InlineKeyboardButton(text="← Back", callback_data="broadcast:cancel_flow"),
+        InlineKeyboardButton(text="← Back", callback_data="menu:main"),
     )
     return builder.as_markup()
 

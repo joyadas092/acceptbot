@@ -5,38 +5,59 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import StatesGroup, State
 import uuid
 
-from ..keyboards.broadcast_menu import broadcast_target_keyboard, broadcast_confirm_keyboard, broadcast_control_keyboard
+from ..keyboards.broadcast_menu import broadcast_picker_keyboard, broadcast_confirm_keyboard, broadcast_control_keyboard
 
 class BroadcastStates(StatesGroup):
+    picking_target = State()
     composing_message = State()
-    selecting_target = State()
     confirming = State()
 
 router = Router()
 
 @router.message(Command('broadcast'))
-async def broadcast_command(message: Message, state: FSMContext):
-    # normally check entitlement here
-    await state.set_state(BroadcastStates.composing_message)
-    await message.answer("Please send the message you want to broadcast (text, photo, video, document, etc.):")
+async def broadcast_command(message: Message, state: FSMContext, chat_repo):
+    user_id = message.from_user.id
+    chats = await chat_repo.get_by_admin(user_id)
+    if not chats:
+        return await message.answer("You don't have any connected chats.")
+    
+    await state.set_state(BroadcastStates.picking_target)
+    await message.answer("Select a target for the broadcast:", reply_markup=broadcast_picker_keyboard(chats))
 
 @router.callback_query(F.data == 'menu:broadcast')
-async def broadcast_menu(callback: CallbackQuery, state: FSMContext):
+async def broadcast_menu(callback: CallbackQuery, state: FSMContext, chat_repo):
+    user_id = callback.from_user.id
+    chats = await chat_repo.get_by_admin(user_id)
+    if not chats:
+        return await callback.answer("You don't have any connected chats.", show_alert=True)
+    
+    await state.set_state(BroadcastStates.picking_target)
+    await callback.message.edit_text("Select a target for the broadcast:", reply_markup=broadcast_picker_keyboard(chats))
+    await callback.answer()
+
+@router.callback_query(BroadcastStates.picking_target, F.data.startswith('broadcast:pick:'))
+async def process_broadcast_pick(callback: CallbackQuery, state: FSMContext):
+    target_val = callback.data.split(':')[2]
+    
+    if target_val == 'all':
+        await state.update_data(target='all', target_id=None)
+    else:
+        await state.update_data(target='chat', target_id=int(target_val))
+        
     await state.set_state(BroadcastStates.composing_message)
-    await callback.message.edit_text("Please send the message you want to broadcast:")
+    await callback.message.edit_text("Please send the message you want to broadcast (text, photo, video, document, etc.):")
     await callback.answer()
 
 @router.callback_query(F.data.startswith('broadcast:chat:'))
 async def broadcast_chat_start(callback: CallbackQuery, state: FSMContext):
     chat_id = int(callback.data.split(':')[2])
-    await state.update_data(target_chat_id=chat_id)
+    await state.update_data(target='chat', target_id=chat_id)
     await state.set_state(BroadcastStates.composing_message)
     await callback.message.edit_text("Please send the message you want to broadcast to this chat's users:")
     await callback.answer()
 
 @router.message(BroadcastStates.composing_message)
-async def receive_broadcast_message(message: Message, state: FSMContext, chat_repo):
-    # Store message details
+async def receive_broadcast_message(message: Message, state: FSMContext, join_request_repo, chat_repo):
     msg_data = {
         'message_id': message.message_id,
         'from_chat_id': message.chat.id
@@ -44,40 +65,35 @@ async def receive_broadcast_message(message: Message, state: FSMContext, chat_re
     await state.update_data(msg_data=msg_data)
     
     data = await state.get_data()
-    chat_id = data.get('target_chat_id')
+    target = data.get('target')
+    target_id = data.get('target_id')
     
     user_id = message.from_user.id
-    chats = await chat_repo.get_by_admin(user_id)
     
-    await state.set_state(BroadcastStates.selecting_target)
-    await message.answer(
-        "Message received. Please select the target audience:",
-        reply_markup=broadcast_target_keyboard(chat_id, chats)
-    )
-
-@router.callback_query(BroadcastStates.selecting_target, F.data.startswith('broadcast:target:'))
-async def select_broadcast_target(callback: CallbackQuery, state: FSMContext):
-    target = callback.data.split(':')[2]
-    target_id = None
-    if target == 'chat':
-        target_id = int(callback.data.split(':')[3])
+    # Calculate real recipient count
+    estimate = 0
+    if target == 'all':
+        chats = await chat_repo.get_by_admin(user_id)
+        for c in chats:
+            c_id = c['chat_id']
+            count = await join_request_repo.collection.count_documents({"chat_id": c_id, "status": "approved"})
+            estimate += count
+    else:
+        estimate = await join_request_repo.collection.count_documents({"chat_id": target_id, "status": "approved"})
     
-    await state.update_data(target=target, target_id=target_id)
+    await state.update_data(estimate=estimate)
     await state.set_state(BroadcastStates.confirming)
     
     job_id = str(uuid.uuid4())
     await state.update_data(job_id=job_id)
     
-    # Estimate recipients (placeholder)
-    estimate = 100
-    
     text = (
         f"📊 <b>Broadcast Summary</b>\n\n"
         f"Target: {'Specific Channel' if target == 'chat' else 'All Channels'}\n"
-        f"Estimated recipients: ~{estimate}\n\n"
+        f"Estimated recipients: {estimate}\n\n"
         "Are you ready to start?"
     )
-    await callback.message.edit_text(text, reply_markup=broadcast_confirm_keyboard(job_id))
+    await message.answer(text, reply_markup=broadcast_confirm_keyboard(job_id))
 
 @router.callback_query(BroadcastStates.confirming, F.data.startswith('broadcast:confirm:'))
 async def confirm_broadcast(callback: CallbackQuery, state: FSMContext, broadcast_repo):
@@ -86,8 +102,8 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext, broadcas
     target = data.get('target')
     target_id = data.get('target_id')
     msg_data = data.get('msg_data')
+    estimate = data.get('estimate', 0)
     
-    # Create job in db
     await broadcast_repo.create_job({
         'job_id': job_id,
         'user_id': callback.from_user.id,
@@ -96,7 +112,7 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext, broadcas
         'msg_data': msg_data,
         'status': 'running',
         'progress': 0,
-        'total': 100
+        'total': estimate
     })
     
     await state.clear()

@@ -2,25 +2,30 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
+from pymongo import ReturnDocument
 
 class JoinRequestRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.collection = db['join_requests']
 
     async def create(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
-        if 'created_at' not in request_data:
-            request_data['created_at'] = datetime.now(timezone.utc)
-
-        try:
-            await self.collection.insert_one(request_data)
-            return request_data
-        except DuplicateKeyError:
-            if '_id' in request_data:
-                return await self.get_by_id(request_data['_id'])
-            return await self.collection.find_one({
-                "chat_id": request_data.get("chat_id"),
-                "user_id": request_data.get("user_id")
-            })
+        user_id = request_data.get('user_id')
+        chat_id = request_data.get('chat_id')
+        if not user_id or not chat_id:
+            raise ValueError("user_id and chat_id are required")
+            
+        update_doc = {
+            "$set": {k: v for k, v in request_data.items() if k not in ('user_id', 'chat_id')},
+            "$setOnInsert": {"created_at": datetime.now(timezone.utc)}
+        }
+        
+        result = await self.collection.find_one_and_update(
+            {"user_id": user_id, "chat_id": chat_id},
+            update_doc,
+            upsert=True,
+            return_document=ReturnDocument.AFTER
+        )
+        return result
 
     # Aliases matching what handlers/services call
     async def create_request(self, *args, **kwargs) -> Dict[str, Any]:

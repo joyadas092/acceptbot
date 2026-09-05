@@ -57,10 +57,14 @@ async def master_broadcast_command(message: Message, state: FSMContext):
     """Super admin master broadcast."""
     await message.answer("Master broadcast feature. Please use regular broadcast interface for now, or build this out to use 'all users' target.")
 
+@router.callback_query(F.data == 'menu:admin')
 @router.callback_query(F.data.startswith('admin:'))
 async def admin_callbacks(callback: CallbackQuery, user_repo, chat_repo):
     """Handle admin panel callbacks."""
-    action = callback.data.split(':')[1]
+    if callback.data == 'menu:admin':
+        action = 'main'
+    else:
+        action = callback.data.split(':')[1]
     
     if action == 'main':
         await callback.message.edit_text(

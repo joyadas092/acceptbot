@@ -146,19 +146,30 @@ async def main() -> None:
     user_repo = UserRepository(db_manager.db) if db_manager.db is not None else None
     user_service = UserService(user_repo) if user_repo is not None else None
 
-    # Register middlewares (order matters: outer first)
-    dp.message.middleware(LoggingMiddleware())
-    dp.callback_query.middleware(LoggingMiddleware())
-    dp.message.middleware(DatabaseMiddleware(
+    # Register middlewares (order matters: outer first).
+    #
+    # Some middlewares need to run for ALL update types — not just
+    # `message` and `callback_query`. In particular:
+    #   - my_chat_member  (bot added/removed as admin)         → needs chat_repo
+    #   - chat_member     (regular member changes)              → needs chat_repo
+    #   - chat_join_request (user asks to join)                → needs chat_repo
+    # Registering on `dp.update` (the outer level) makes them run before
+    # any observer, so every handler — regardless of event type — gets the
+    # injected repos and the structured log line.
+    db_middleware = DatabaseMiddleware(
         db_manager.db,
         UserRepository, ChatRepository, JoinRequestRepository,
         BroadcastRepository, SubscriptionRepository,
-    ))
-    dp.callback_query.middleware(DatabaseMiddleware(
-        db_manager.db,
-        UserRepository, ChatRepository, JoinRequestRepository,
-        BroadcastRepository, SubscriptionRepository,
-    ))
+    )
+    logging_middleware = LoggingMiddleware()
+
+    # Outer (all updates): DB + logging
+    dp.update.middleware(logging_middleware)
+    dp.update.middleware(db_middleware)
+
+    # Per-observer middlewares that only make sense for user-driven events.
+    # Throttling + auth don't apply to my_chat_member / chat_member /
+    # chat_join_request — those have no "user issuing a command" semantics.
     dp.message.middleware(ThrottlingMiddleware(UserCommandThrottler(redis_client)))
     dp.callback_query.middleware(ThrottlingMiddleware(UserCommandThrottler(redis_client)))
     dp.message.middleware(AuthMiddleware(settings, user_service))

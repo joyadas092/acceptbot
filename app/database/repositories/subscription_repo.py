@@ -69,6 +69,7 @@ class SubscriptionRepository:
         plans = [
             {
                 "_id": "FREE",
+                "plan_id": "FREE",
                 "name": "Free",
                 "broadcasts_per_day": 0,
                 "max_recipients": 0,
@@ -78,6 +79,7 @@ class SubscriptionRepository:
             },
             {
                 "_id": "PRO",
+                "plan_id": "PRO",
                 "name": "Pro",
                 "broadcasts_per_day": 10,
                 "max_recipients": 1000,
@@ -87,6 +89,7 @@ class SubscriptionRepository:
             },
             {
                 "_id": "BUSINESS",
+                "plan_id": "BUSINESS",
                 "name": "Business",
                 "broadcasts_per_day": 50,
                 "max_recipients": 10000,
@@ -96,6 +99,7 @@ class SubscriptionRepository:
             },
             {
                 "_id": "ENTERPRISE",
+                "plan_id": "ENTERPRISE",
                 "name": "Enterprise",
                 "broadcasts_per_day": -1, # unlimited
                 "max_recipients": -1, # unlimited
@@ -104,7 +108,7 @@ class SubscriptionRepository:
                 "created_at": now
             }
         ]
-        
+
         for plan in plans:
             await self.plans_collection.update_one(
                 {"_id": plan["_id"]},

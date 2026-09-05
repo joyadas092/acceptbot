@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     redis_url: str = Field(alias='REDIS_URL')
 
     webhook_host: str | None = Field(default=None, alias='WEBHOOK_HOST')
+    webhook_url: str | None = Field(default=None, alias='WEBHOOK_URL')
     webhook_secret: str | None = Field(default=None, alias='WEBHOOK_SECRET')
     webhook_path: str = Field(default='/webhook', alias='WEBHOOK_PATH')
 

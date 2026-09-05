@@ -29,8 +29,8 @@ from app.services.user_service import UserService
 from app.services.rate_limiter import UserCommandThrottler
 from app.database.repositories import UserRepository
 
-async def on_startup(bot: Bot, settings, db_manager, redis_client) -> None:
-    """Called on bot startup."""
+async def setup_bot(bot: Bot, settings, db_manager, redis_client) -> None:
+    """Initialize DB connection, register webhook. Called before aiohttp starts."""
     logger = get_logger('startup')
     logger.info("Starting bot...")
 
@@ -39,13 +39,30 @@ async def on_startup(bot: Bot, settings, db_manager, redis_client) -> None:
     # Create indexes could be called here
     # await db_manager.create_indexes()
 
-    if settings.environment == "production" and settings.webhook_host:
-        webhook_url = f"{settings.webhook_host}{settings.webhook_path}"
-        if settings.webhook_secret:
-            await bot.set_webhook(url=webhook_url, secret_token=settings.webhook_secret)
+    if settings.environment == "production":
+        # Accept either WEBHOOK_URL (full URL) or WEBHOOK_HOST (host) + WEBHOOK_PATH.
+        # If WEBHOOK_URL doesn't include the path, append webhook_path so the
+        # registered URL matches where SimpleRequestHandler is mounted.
+        if settings.webhook_url:
+            base = settings.webhook_url.rstrip('/')
+            path = settings.webhook_path if not settings.webhook_url.endswith(settings.webhook_path) else ''
+            webhook_url = f"{base}{path}"
+        elif settings.webhook_host:
+            host = settings.webhook_host.rstrip('/')
+            webhook_url = f"{host}{settings.webhook_path}"
         else:
-            await bot.set_webhook(url=webhook_url)
-        logger.info("Webhook set", url=webhook_url)
+            webhook_url = None
+
+        if webhook_url:
+            if settings.webhook_secret:
+                await bot.set_webhook(url=webhook_url, secret_token=settings.webhook_secret)
+            else:
+                await bot.set_webhook(url=webhook_url)
+            logger.info("Webhook set", url=webhook_url)
+        else:
+            logger.warning(
+                "No WEBHOOK_URL or WEBHOOK_HOST set — bot will not receive Telegram updates"
+            )
 
     logger.info("Bot started successfully")
 
@@ -79,6 +96,11 @@ async def main() -> None:
     bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
 
     redis_client = Redis.from_url(settings.redis_url)
+
+    # Connect DB and register webhook BEFORE starting the web server.
+    # This makes /start work — the prior version deferred this to dp.startup
+    # observer which aiogram never awaited (see RuntimeWarning in logs).
+    await setup_bot(bot, settings, db_manager, redis_client)
     storage = RedisStorage(redis=redis_client)
     dp = Dispatcher(storage=storage)
 
@@ -103,7 +125,6 @@ async def main() -> None:
     main_router = setup_routers()
     dp.include_router(main_router)
 
-    dp.startup.register(lambda bot: on_startup(bot, settings, db_manager, redis_client))
     dp.shutdown.register(lambda bot: on_shutdown(bot, settings, db_manager, redis_client))
 
     if settings.environment == "production":

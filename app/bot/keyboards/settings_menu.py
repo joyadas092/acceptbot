@@ -4,14 +4,19 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def approval_settings_keyboard(
     chat_id: int,
     auto_approval: bool,
-    delay_seconds: int
+    delay_seconds: int,
+    captcha_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     """Approval settings keyboard."""
     builder = InlineKeyboardBuilder()
-    
+
     toggle_text = "🟢 Auto Approval: ON" if auto_approval else "🔴 Auto Approval: OFF"
     builder.button(text=toggle_text, callback_data=f"approval:toggle:{chat_id}")
-    
+
+    # Captcha mode toggle
+    captcha_text = "🛡 Captcha: ON ✅" if captcha_enabled else "🛡 Captcha: OFF"
+    builder.button(text=captcha_text, callback_data=f"captcha:toggle:{chat_id}")
+
     # Delay options
     delays = [
         ("⚡ Immediate", 0),
@@ -22,16 +27,17 @@ def approval_settings_keyboard(
         ("⏱ 1h", 3600),
         ("⏱ 2h", 7200)
     ]
-    
+
     for text, val in delays:
         # Mark active delay
         btn_text = f"✅ {text}" if delay_seconds == val else text
         builder.button(text=btn_text, callback_data=f"approval:delay:{chat_id}:{val}")
-        
+
     builder.button(text="✏️ Custom", callback_data=f"approval:delay:{chat_id}:custom")
     builder.button(text="← Back", callback_data=f"chat:select:{chat_id}")
-    
-    builder.adjust(1, 3, 3, 2, 1)
+
+    # Row 1: two toggles (auto approval, captcha). Row 2+: 2 delay per row, 4 rows.
+    builder.adjust(2, 2, 2, 2, 2, 1)
     return builder.as_markup()
 
 def welcome_settings_keyboard(

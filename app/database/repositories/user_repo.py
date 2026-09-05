@@ -39,6 +39,16 @@ class UserRepository:
     async def count(self) -> int:
         return await self.count_total()
 
+    async def update(self, filter: Dict[str, Any], update: Dict[str, Any]) -> bool:
+        """Generic update used by services: forwards $set / $inc as-is."""
+        if not any(k.startswith('$') for k in update.keys()):
+            update = {"$set": {**update, "updated_at": datetime.now(timezone.utc)}}
+        else:
+            if '$set' in update:
+                update['$set'] = {**update['$set'], 'updated_at': datetime.now(timezone.utc)}
+        result = await self.collection.update_one(filter, update)
+        return result.modified_count > 0
+
     async def count_by_status(self, status: str) -> int:
         return await self.collection.count_documents({"status": status})
 

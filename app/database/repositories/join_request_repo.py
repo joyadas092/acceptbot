@@ -22,9 +22,41 @@ class JoinRequestRepository:
                 "user_id": request_data.get("user_id")
             })
 
-    # Aliases matching what handlers call
-    async def create_request(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
-        return await self.create(request_data)
+    # Aliases matching what handlers/services call
+    async def create_request(self, *args, **kwargs) -> Dict[str, Any]:
+        """Flexible alias: accept either a dict, or (chat_id, user_id) positional args."""
+        if len(args) == 1 and isinstance(args[0], dict):
+            return await self.create(args[0])
+        if len(args) == 2:
+            chat_id, user_id = args
+            return await self.create({
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "status": "pending"
+            })
+        if "request_data" in kwargs:
+            return await self.create(kwargs["request_data"])
+        raise TypeError("create_request requires a dict or (chat_id, user_id)")
+
+    async def get(self, request_id: str) -> Optional[Dict[str, Any]]:
+        return await self.get_by_id(request_id)
+
+    async def find(self, query: Dict[str, Any], limit: int = 100) -> List[Dict[str, Any]]:
+        """Generic filter used by services; returns a list."""
+        cursor = self.collection.find(query).limit(limit)
+        return await cursor.to_list(length=limit)
+
+    async def update(self, filter: Dict[str, Any], update: Dict[str, Any]) -> bool:
+        """Generic update: forwards $set / $inc etc. as-is to MongoDB."""
+        if not any(k.startswith('$') for k in update.keys()):
+            # No operator — wrap as $set
+            update = {"$set": {**update, "updated_at": datetime.now(timezone.utc)}}
+        else:
+            # Make sure $set has updated_at
+            if '$set' in update:
+                update['$set'] = {**update['$set'], 'updated_at': datetime.now(timezone.utc)}
+        result = await self.collection.update_one(filter, update)
+        return result.modified_count > 0
 
     async def get_pending(self, chat_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         return await self.collection.find_one({

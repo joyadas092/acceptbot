@@ -41,6 +41,12 @@ class ChatRepository:
     async def update_settings(self, chat_id: int, settings_data: Dict[str, Any]) -> Dict[str, Any]:
         return await self.upsert_settings(chat_id, settings_data)
 
+    async def get_chat_settings(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        return await self.get_settings(chat_id)
+
+    async def get_chat_settings_with_defaults(self, chat_id: int) -> Dict[str, Any]:
+        return await self.get_settings_with_defaults(chat_id)
+
     async def get_by_chat_id(self, chat_id: int) -> Optional[Dict[str, Any]]:
         return await self.collection.find_one({"chat_id": chat_id})
 

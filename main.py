@@ -6,6 +6,7 @@ Modes:
 - Development: Long polling mode (ENVIRONMENT=development)
 """
 import asyncio
+import os
 import sys
 import signal
 from contextlib import asynccontextmanager
@@ -155,9 +156,11 @@ async def main() -> None:
 
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, host="0.0.0.0", port=settings.app_port)
+        # Railway injects $PORT; honor it if present, else fall back to APP_PORT.
+        port = int(os.environ.get('PORT', settings.app_port))
+        site = web.TCPSite(runner, host="0.0.0.0", port=port)
 
-        logger.info(f"Starting web server on 0.0.0.0:{settings.app_port}")
+        logger.info(f"Starting web server on 0.0.0.0:{port}")
         await site.start()
 
         # Run forever

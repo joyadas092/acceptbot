@@ -102,6 +102,16 @@ async def main() -> None:
     # This makes /start work — the prior version deferred this to dp.startup
     # observer which aiogram never awaited (see RuntimeWarning in logs).
     await setup_bot(bot, settings, db_manager, redis_client)
+
+    # Cache bot username once for Add-to-Group/Channel deep-link buttons.
+    try:
+        me = await bot.get_me()
+        bot_username = me.username or ""
+        if not bot_username:
+            logger.warning("Bot has no username; Add-to-Group buttons will be disabled.")
+    except Exception as e:
+        logger.warning(f"getMe failed, deep-link buttons disabled: {e}")
+        bot_username = ""
     storage = RedisStorage(redis=redis_client)
     dp = Dispatcher(storage=storage)
 
@@ -109,6 +119,7 @@ async def main() -> None:
     dp['settings'] = settings
     dp['db_manager'] = db_manager
     dp['redis_client'] = redis_client
+    dp['bot_username'] = bot_username
 
     # Build services used by middlewares
     user_repo = UserRepository(db_manager.db) if db_manager.db is not None else None

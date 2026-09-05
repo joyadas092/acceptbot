@@ -7,11 +7,58 @@
 
 ---
 
+## 0. RECENT CHANGES (read first if you haven't in a while)
+
+- **/start now shows Add-to-Group / Add-to-Channel deep-link buttons.** Bot
+  username is cached once at startup via `bot.get_me()` and exposed through
+  the dispatcher as `bot_username` in handler data. See `main.py` and
+  `keyboards/main_menu.py → welcome_start_keyboard`.
+- **/welcome redesigned as a chat-picker flow.** Admins now pick which
+  group/channel to edit, then a single editor screen lets them configure
+  **text + media + buttons + preview**. The legacy `welcome:toggle`,
+  `welcome:trigger:*`, and `welcome:delay:*` callbacks are removed.
+- **Welcome content supports media (photo / video / animation / document) and
+  premium emoji** (`<tg-emoji emoji-id="…">⭐</tg-emoji>`). See
+  `handlers/welcome.py` and `services/welcome_service.py`.
+- **Captcha mode (🛡 Captcha) added** — admin-gated toggle on the chat's
+  approval-settings screen. When ON, new join requests are NOT auto-approved;
+  instead the bot DMs the user an "I'm not a robot" button and only approves
+  when they click it. See `handlers/join_requests.py` and the
+  `captcha:toggle:` / `captcha:verify:` callbacks, plus the `/captcha` command.
+- **Defaults updated**: `get_settings_with_defaults` now returns
+  `welcome_enabled=True`, `welcome_trigger="on_approval"`,
+  `captcha_enabled=False`. The per-chat welcome on/off button is gone.
+- **Deployment fix**: `main.py` reads `PORT` env var (Railway injects it) with
+  fallback to `APP_PORT`. The web server binds `0.0.0.0:$PORT`.
+- **Webhook fix**: `setup_bot` runs BEFORE `aiohttp` starts; the prior
+  `dp.startup.register` observer was never awaited by aiogram.
+- **DB-repository aliases** added on `user_repo`, `chat_repo`,
+  `join_request_repo` to keep handler call-sites uniform.
+
+### Bot commands the user can invoke
+
+| Command | Scope | Where |
+|---|---|---|
+| `/start` | private | registers user, shows main menu or "Add to Group/Channel" deep-links |
+| `/help` | private | list of commands |
+| `/tutorial` | private | 8-section walkthrough |
+| `/mychannels` / `/refresh` | private | list connected chats |
+| `/settings` | private | per-chat settings menu |
+| `/welcome` | private | chat picker → welcome editor (text / media / buttons / preview / clear) |
+| `/captcha on\|off` | in chat | toggles captcha mode for that chat (admin only) |
+| `/captcha <chat_id> on\|off` | private | same, addressed by chat id (admin only) |
+| `/broadcast …` | private | broadcast composer FSM |
+| `/stats` | private | stats per chat |
+| `/admin` etc. | private | super admin only |
+
+---
+
 ## 1. PROJECT OVERVIEW
 
 A production-grade Telegram bot that:
 - **Auto-approves join requests** to groups/channels (immediately or after a delay)
-- **Sends configurable welcome messages** with inline buttons
+- **Optional captcha gate** — DM the user a "I'm not a robot" button, only approve on click
+- **Sends configurable welcome DMs** to newly approved members — text (with HTML + premium emoji), optional photo/video/GIF/document, and inline URL buttons
 - **Broadcasts messages** to users via a persistent worker queue (paid feature)
 - **Supports multiple admins** and **per-chat configuration**
 - **Targets 1M+ users** — never loads all users into RAM, never creates one task per user
@@ -95,14 +142,14 @@ RequestAcceptBot/
 │   ├── bot/
 │   │   ├── handlers/              ← aiogram Routers — THIN layer, calls services only
 │   │   │   ├── __init__.py        ← setup_routers() assembles all routers in correct order
-│   │   │   ├── start.py           ← /start, /help, menu:main callback
+│   │   │   ├── start.py           ← /start, /help, menu:main callback. /start surfaces Add-to-Group/Channel deep-links
 │   │   │   ├── tutorial.py        ← /tutorial with 8 sections, inline navigation
 │   │   │   ├── chat_member.py     ← my_chat_member updates (bot added/removed as admin)
-│   │   │   ├── join_requests.py   ← chat_join_request updates (entry point for approval flow)
+│   │   │   ├── join_requests.py   ← chat_join_request updates. When captcha_enabled, DMs "I'm not a robot" instead of auto-approving
 │   │   │   ├── chats.py           ← /mychannels, /refresh, chat:select, chat:disconnect
 │   │   │   ├── settings.py        ← /settings, settings:chat: callbacks
-│   │   │   ├── approval.py        ← /approval, toggle, delay, custom delay FSM
-│   │   │   ├── welcome.py         ← /welcome, toggle, trigger, edit text FSM
+│   │   │   ├── approval.py        ← /approval, toggle, delay, custom delay FSM, captcha toggle + /captcha command
+│   │   │   ├── welcome.py         ← /welcome + chat-picker + editor (text/media/buttons/preview/clear), premium emoji, captcha:verify handler
 │   │   │   ├── buttons.py         ← /buttons, button builder FSM (add/delete/preview)
 │   │   │   ├── broadcast.py       ← /broadcast FSM, /broadcast_status/pause/resume/cancel
 │   │   │   ├── stats.py           ← /stats, stats:chat: callbacks
@@ -203,8 +250,13 @@ Telegram → chat_join_request update
   → handlers/join_requests.py (THIN — calls service only)
   → approval_service.handle_new_join_request()
       ├── Store in join_requests (idempotent via DuplicateKeyError handling)
-      ├── If auto_approval_enabled AND delay=0 → approve immediately
-      ├── If auto_approval_enabled AND delay>0 → set status=scheduled, scheduled_at=now+delay
+      ├── If captcha_enabled:
+      │     ├── DO NOT auto-approve
+      │     ├── Persist request with status=pending, captcha_required=true
+      │     └── DM user "I'm not a robot" button (callback captcha:verify:<chat>:<user>)
+      │           └── on click → bot.approve_chat_join_request → DB status=approved
+      ├── Else if auto_approval_enabled AND delay=0 → approve immediately
+      ├── Else if auto_approval_enabled AND delay>0 → set status=scheduled, scheduled_at=now+delay
       └── If welcome_trigger=on_request → welcome_service.send_welcome()
 
 approval_worker (separate process, polls every 5s):
@@ -214,6 +266,49 @@ approval_worker (separate process, polls every 5s):
       ├── Telegram approveChatJoinRequest
       ├── DB: status=approved
       └── welcome_service.send_welcome(trigger=on_approval)
+```
+
+### Welcome Configuration Flow
+```
+/welcome (in private chat)
+  → handlers/welcome.py → welcome_command()
+      ├── If user has no chats → "add me first" message
+      ├── If user has 1 chat  → jump straight to editor
+      └── If user has N>1 chats → welcome_chat_picker_keyboard()
+
+welcome:pick:<chat_id>  →  _show_welcome_editor(chat_id)
+                              └── welcome_settings_keyboard:
+                                    ├── ✏️ Edit Text   (FSM WelcomeStates.editing_text)
+                                    ├── 🖼 Set Media   (FSM WelcomeStates.waiting_media)
+                                    ├── 🔘 Buttons     (delegates to settings:buttons:)
+                                    ├── 👁 Preview      (renders saved msg to admin's DM)
+                                    ├── 🗑 Clear
+                                    └── ← Back
+
+The welcome DM that newly approved members receive is built by
+welcome_service.send_welcome():
+  - If media_file_id set → bot.send_photo / send_video / send_animation / send_document
+  - Else → bot.send_message
+  - Caption/text may contain HTML and <tg-emoji emoji-id="…">⭐</tg-emoji> tags
+  - Buttons come from chat.welcome_buttons (text + url, row)
+```
+
+### Captcha Flow
+```
+Admin sets 🛡 Captcha: ON in chat's approval settings
+   OR runs `/captcha on` in the chat (or `/captcha <chat_id> on` in private)
+
+On chat_join_request:
+  - chat_repo.get_chat_settings_with_defaults → captcha_enabled=True
+  - Join request stored with status=pending, captcha_required=true
+  - Bot.send_message(user_id, "I'm not a robot" button)
+        If DM fails (user never /started the bot):
+          → fallback to auto-approve (don't lock the user out)
+
+User clicks button → captcha:verify:<chat>:<user>
+  - bot.approve_chat_join_request(chat_id, user_id)
+  - join_request_repo.update status=approved, captcha_required=false
+  - Welcome DM (if configured) goes out after approval
 ```
 
 ### Broadcast Flow
@@ -273,11 +368,13 @@ broadcast_worker (separate process, polls every 10s):
 | `REDIS_URL` | YES | e.g. `redis://localhost:6379/0` |
 | `SUPER_ADMIN_IDS` | YES | Comma-separated Telegram user IDs |
 | `ENVIRONMENT` | YES | `production` or `development` |
-| `WEBHOOK_URL` | Prod | Full HTTPS URL for Telegram webhook |
+| `WEBHOOK_URL` | Prod | Full HTTPS URL for Telegram webhook (preferred) |
+| `WEBHOOK_HOST` | Prod | Fallback host; combined with `WEBHOOK_PATH` if `WEBHOOK_URL` is unset |
 | `WEBHOOK_SECRET` | Prod | Secret token for webhook validation |
 | `WEBHOOK_PATH` | Prod | URL path (default `/webhook`) |
 | `APP_HOST` | No | Bind host (default `0.0.0.0`) |
-| `APP_PORT` | No | Bot HTTP port (default `8000`) |
+| `APP_PORT` | No | Bot HTTP port fallback (default `8000`) |
+| `PORT` | Railway | **Injected by Railway**. `main.py` reads this first; do not set `APP_PORT` on Railway |
 | `LOG_LEVEL` | No | `DEBUG`/`INFO`/`WARNING` |
 | `APPROVAL_POLL_INTERVAL` | No | Worker poll seconds (default `5`) |
 | `BROADCAST_BATCH_SIZE` | No | Recipients per batch (default `200`) |
@@ -291,15 +388,20 @@ broadcast_worker (separate process, polls every 10s):
 |---|---|
 | Bot doesn't detect when added as admin | `handlers/chat_member.py` → `bot_chat_member_updated()` |
 | Join requests not being approved | `services/approval_service.py` + check approval_worker running |
+| Captcha ON but user not approved | User never clicked the button — `join_requests.captcha_required` flag, `captcha:verify` callback |
 | Approval worker not running | `workers/run_approval_worker.py` — run as separate process |
 | Redis lock stuck | Key pattern: `approval_lock:{chat_id}:{user_id}` — DEL from Redis |
-| Welcome messages not sending | `services/welcome_service.py` → check trigger matches settings |
+| Welcome messages not sending | `services/welcome_service.py` — content lives on `chat.welcome_settings` (text + media_file_id + media_type) |
+| Welcome media not rendering | Check `media_type` is one of `photo`, `video`, `animation`, `document`; bot must have access to the file_id (must be uploaded in this bot) |
+| Welcome premium emoji shows raw tag | `parse_mode=HTML` must be on (it is, via `DefaultBotProperties`) and the `emoji-id` must be valid for the chat |
 | Welcome before approval fails | EXPECTED: Telegram restriction, check `join_requests.welcome_status` |
+| Add-to-Group/Channel buttons missing on /start | `main.py` did not get a username from `get_me()` — check logs. URL pattern is `https://t.me/<username>?startgroup=true` |
 | Broadcast not starting | Check worker running + user subscription + `broadcast_jobs.status` |
 | Duplicate welcome messages | `welcome_service` checks `join_request.welcome_status` before sending |
 | Callback pressed by wrong user | `filters/callback_owner.py` — CallbackOwner filter |
 | Settings not saved | `repositories/chat_repo.py → update_settings_field()` |
 | Rate limit errors from Telegram | `services/rate_limiter.py` + check Redis is reachable |
+| 502 Bad Gateway on Railway | Bot is bound to wrong port — `main.py` must read `PORT` env var, not `APP_PORT` |
 
 ---
 
@@ -310,7 +412,7 @@ FSM storage: Redis via `RedisStorage` from aiogram.
 | File | States Class | States |
 |---|---|---|
 | `handlers/approval.py` | `ApprovalStates` | `waiting_custom_delay` |
-| `handlers/welcome.py` | `WelcomeStates` | `editing_text`, `waiting_custom_delay` |
+| `handlers/welcome.py` | `WelcomeStates` | `editing_text`, `waiting_media` |
 | `handlers/buttons.py` | `ButtonBuilderStates` | `waiting_button_text`, `waiting_button_url`, `waiting_button_row` |
 | `handlers/broadcast.py` | `BroadcastStates` | `composing_message`, `selecting_target`, `confirming` |
 
@@ -324,11 +426,12 @@ Format: `prefix:action:params` (max 64 bytes total)
 
 | Prefix | Example |
 |---|---|
-| `menu:` | `menu:main`, `menu:chats`, `menu:settings` |
+| `menu:` | `menu:main`, `menu:chats`, `menu:settings`, `menu:welcome` |
 | `chat:` | `chat:select:123456`, `chat:disconnect:123456` |
-| `settings:` | `settings:chat:123456` |
+| `settings:` | `settings:chat:123456`, `settings:welcome:123456`, `settings:approval:123456` |
 | `approval:` | `approval:toggle:123456`, `approval:delay:123456:900` |
-| `welcome:` | `welcome:toggle:123456`, `welcome:trigger:123456:on_approval` |
+| `captcha:` | `captcha:toggle:123456`, `captcha:verify:123456:987654` |
+| `welcome:` | `welcome:pick:123456`, `welcome:edit_text:123456`, `welcome:set_media:123456`, `welcome:edit_buttons:123456`, `welcome:preview:123456`, `welcome:clear:123456` |
 | `btn:` | `btn:add:123456`, `btn:delete:123456:0`, `btn:preview:123456` |
 | `broadcast:` | `broadcast:confirm:job123`, `broadcast:pause:job123` |
 | `stats:` | `stats:chat:123456`, `stats:refresh:123456` |
@@ -411,10 +514,15 @@ python tests/load/simulate_broadcast.py --users 100000
 
 | Endpoint | Port | Description |
 |---|---|---|
-| `POST /webhook` | 8000 | Telegram webhook (production) |
-| `GET /health` | 8080 | App alive check |
-| `GET /ready` | 8080 | MongoDB + Redis connectivity check |
-| `GET /metrics` | 9090 | Prometheus metrics |
+| `POST /webhook` | `$PORT` (Railway) / 8000 fallback | Telegram webhook (production) |
+| `GET /health` | same port | App alive check (mounted on the aiohttp app) |
+| `GET /ready` | same port | MongoDB + Redis connectivity check |
+| `GET /metrics` | 9090 | Prometheus metrics (legacy docs) |
+
+> **Port binding**: `main.py` reads `PORT` env var (Railway injects this) and
+> falls back to `APP_PORT` (default `8000`). The aiohttp runner binds
+> `0.0.0.0:$PORT`. The bot process and the workers are separate Railway
+> services — they all expose their own port.
 
 ---
 

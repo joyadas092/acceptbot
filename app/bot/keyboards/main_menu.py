@@ -4,7 +4,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def main_menu_keyboard(is_super_admin: bool = False) -> InlineKeyboardMarkup:
     """Main menu shown after /start."""
     builder = InlineKeyboardBuilder()
-    
+
     # Row 1
     builder.button(text="📋 My Chats", callback_data="menu:chats")
     builder.button(text="⚙️ Settings", callback_data="menu:settings")
@@ -19,23 +19,46 @@ def main_menu_keyboard(is_super_admin: bool = False) -> InlineKeyboardMarkup:
     builder.button(text="❓ Help", callback_data="menu:help")
     # Row 5
     builder.button(text="🔄 Refresh", callback_data="menu:refresh")
-    
+
     builder.adjust(2, 2, 2, 2, 1)
-    
+
     if is_super_admin:
         builder.row(
             builder.button(text="👑 Admin Panel", callback_data="admin:main")
         )
-        
+
     return builder.as_markup()
 
-def welcome_start_keyboard() -> InlineKeyboardMarkup:
-    """Keyboard shown on /start before any chats connected."""
+def welcome_start_keyboard(bot_username: str = "") -> InlineKeyboardMarkup:
+    """
+    Keyboard shown on /start before any chats connected.
+
+    The two URL buttons use Telegram's deep-link parameters:
+      ?startgroup=true  → bot is added as admin of a group
+      ?startchannel=true → bot is added as admin of a channel
+    If we don't know the bot username yet (e.g. getMe failed at startup),
+    those rows are dropped so the keyboard still renders.
+    """
     builder = InlineKeyboardBuilder()
-    
+
+    # Row 1: Add to Group / Add to Channel (deep-link buttons).
+    # These are the primary conversion path — keep them visible.
+    if bot_username:
+        builder.button(
+            text="➕ Add to Group",
+            url=f"https://t.me/{bot_username}?startgroup=true",
+        )
+        builder.button(
+            text="➕ Add to Channel",
+            url=f"https://t.me/{bot_username}?startchannel=true",
+        )
+
+    # Row 2: secondary actions
     builder.button(text="📖 Setup Tutorial", callback_data="tutorial:1")
     builder.button(text="🔄 Refresh Chats", callback_data="menu:refresh")
-    builder.button(text="⚙️ Settings", callback_data="menu:settings")
-    
-    builder.adjust(1)
+
+    if bot_username:
+        builder.adjust(2, 2)
+    else:
+        builder.adjust(2)
     return builder.as_markup()

@@ -4,26 +4,46 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 def chat_list_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
     """List of connected chats, each as a row with chat name."""
     builder = InlineKeyboardBuilder()
-    
+
     for chat in chats:
         title = chat.get('title', 'Unknown Chat')
         chat_id = chat.get('id')
         builder.button(text=f"💬 {title} →", callback_data=f"chat:select:{chat_id}")
-        
+
     builder.adjust(1)
-    
+
     # Bottom buttons
     builder.row(
         builder.button(text="🔄 Refresh", callback_data="menu:chats:refresh"),
         builder.button(text="← Back", callback_data="menu:main")
     )
-    
+
     return builder.as_markup()
+
+
+def welcome_chat_picker_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
+    """
+    /welcome entry — let the user pick which chat to configure the welcome
+    message for. Uses a different callback prefix so we don't collide with
+    the generic `chat:select:` flow.
+    """
+    builder = InlineKeyboardBuilder()
+    for chat in chats:
+        title = chat.get('title', 'Unknown Chat')
+        chat_id = chat.get('id')
+        builder.button(
+            text=f"💬 {title} →",
+            callback_data=f"welcome:pick:{chat_id}",
+        )
+    builder.adjust(1)
+    builder.row(builder.button(text="← Cancel", callback_data="menu:main"))
+    return builder.as_markup()
+
 
 def chat_action_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     """Actions for a specific chat."""
     builder = InlineKeyboardBuilder()
-    
+
     # Row 1
     builder.button(text="⚡ Approval", callback_data=f"settings:approval:{chat_id}")
     builder.button(text="👋 Welcome", callback_data=f"settings:welcome:{chat_id}")
@@ -36,6 +56,6 @@ def chat_action_keyboard(chat_id: int) -> InlineKeyboardMarkup:
     # Row 4
     builder.button(text="❌ Disconnect", callback_data=f"chat:disconnect:{chat_id}")
     builder.button(text="← Back", callback_data="menu:chats")
-    
+
     builder.adjust(2, 2, 2, 2)
     return builder.as_markup()

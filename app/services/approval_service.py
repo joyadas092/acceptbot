@@ -58,8 +58,10 @@ class ApprovalService:
                 )
                 self.logger.info(f"Scheduled approval for {chat_id}:{user_id} at {schedule_time}")
                 
-        # Send welcome if on_request
-        if settings.get("welcome_enabled", False) and settings.get("welcome_trigger") == "on_request":
+        # Send welcome if on_request. After the toggle/trigger refactor, a
+        # chat with welcome content configured is implicitly enabled — we
+        # only skip when welcome_enabled is explicitly False.
+        if settings.get("welcome_enabled", True) and settings.get("welcome_trigger") == "on_request":
             await self.welcome_service.send_welcome(request_doc, settings, "on_request")
 
     async def execute_approval(
@@ -93,8 +95,9 @@ class ApprovalService:
                     {"status": "approved", "processed_at": utcnow()}
                 )
                 
-                # Check welcome trigger
-                if settings.get("welcome_enabled", False) and settings.get("welcome_trigger") == "on_approval":
+                # Check welcome trigger. Default-on: if the chat has welcome
+                # content configured we send it on every approval.
+                if settings.get("welcome_enabled", True) and settings.get("welcome_trigger", "on_approval") == "on_approval":
                     await self.welcome_service.send_welcome(current_doc, settings, "on_approval")
                     
                 return True

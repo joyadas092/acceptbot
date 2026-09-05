@@ -42,50 +42,33 @@ def approval_settings_keyboard(
 
 def welcome_settings_keyboard(
     chat_id: int,
-    welcome_enabled: bool,
-    trigger: str,
-    delay_seconds: int
+    has_text: bool = False,
+    has_media: bool = False,
+    has_buttons: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Welcome message settings keyboard."""
+    """
+    Welcome message editor keyboard.
+
+    Per product decision, the legacy "welcome on/off + trigger + delay"
+    controls are removed. The welcome message is always sent to newly
+    approved members; admins only configure WHAT it looks like:
+      - text  (with premium emoji / HTML formatting)
+      - media (photo or video attached to the message)
+      - buttons (inline keyboard)
+      - preview before publishing
+    """
     builder = InlineKeyboardBuilder()
-    
-    toggle_text = "🟢 Welcome: ON" if welcome_enabled else "🔴 Welcome: OFF"
-    builder.button(text=toggle_text, callback_data=f"welcome:toggle:{chat_id}")
-    
-    # Triggers
-    triggers = [
-        ("📨 On Request", "on_request"),
-        ("✅ On Approval", "on_approval"),
-        ("⏱ After Appr. + Delay", "delayed")
-    ]
-    
-    for text, val in triggers:
-        btn_text = f"✅ {text}" if trigger == val else text
-        builder.button(text=btn_text, callback_data=f"welcome:trigger:{chat_id}:{val}")
-        
-    builder.adjust(1, 3)
-    
-    if trigger == "delayed":
-        delays = [
-            ("⏱ 5m", 300),
-            ("⏱ 15m", 900),
-            ("⏱ 30m", 1800)
-        ]
-        delay_row = []
-        for text, val in delays:
-            btn_text = f"✅ {text}" if delay_seconds == val else text
-            delay_row.append(builder.button(text=btn_text, callback_data=f"welcome:delay:{chat_id}:{val}"))
-        
-        builder.button(text="✏️ Custom", callback_data=f"welcome:delay:{chat_id}:custom")
-        builder.adjust(1, 3, 4)
-        
-    # Actions
-    builder.row(
-        builder.button(text="✏️ Edit Message", callback_data=f"welcome:edit_text:{chat_id}"),
-        builder.button(text="🔘 Edit Buttons", callback_data=f"welcome:edit_buttons:{chat_id}"),
-        builder.button(text="👁 Preview", callback_data=f"welcome:preview:{chat_id}")
-    )
-    
-    builder.row(builder.button(text="← Back", callback_data=f"chat:select:{chat_id}"))
-    
+
+    text_label = "✏️ Edit Text ✅" if has_text else "✏️ Edit Text"
+    media_label = "🖼 Set Media ✅" if has_media else "🖼 Set Media"
+    buttons_label = "🔘 Buttons ✅" if has_buttons else "🔘 Buttons"
+
+    builder.button(text=text_label, callback_data=f"welcome:edit_text:{chat_id}")
+    builder.button(text=media_label, callback_data=f"welcome:set_media:{chat_id}")
+    builder.button(text=buttons_label, callback_data=f"welcome:edit_buttons:{chat_id}")
+    builder.button(text="👁 Preview", callback_data=f"welcome:preview:{chat_id}")
+    builder.button(text="🗑 Clear", callback_data=f"welcome:clear:{chat_id}")
+    builder.button(text="← Back", callback_data=f"chat:select:{chat_id}")
+
+    builder.adjust(2, 2, 1, 1)
     return builder.as_markup()

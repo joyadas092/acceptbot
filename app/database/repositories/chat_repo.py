@@ -134,11 +134,14 @@ class ChatRepository:
         settings = await self.get_settings(chat_id)
         if settings:
             return settings
-        
+
+        # Defaults reflect the refactor: welcome is on by default, sent on
+        # every approval, with no delay (the per-chat timer UI is gone).
         return {
             "chat_id": chat_id,
             "auto_approve": False,
-            "welcome_message_enabled": False,
-            "welcome_message_text": "Welcome to the group!",
-            "delay_seconds": 0
+            "welcome_enabled": True,
+            "welcome_trigger": "on_approval",
+            "captcha_enabled": False,
+            "delay_seconds": 0,
         }

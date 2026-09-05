@@ -25,7 +25,7 @@ class DatabaseManager:
             self.client.close()
             
     async def create_indexes(self):
-        if not self.db:
+        if self.db is None:
             return
             
         try:

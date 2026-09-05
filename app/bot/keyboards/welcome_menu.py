@@ -127,3 +127,4 @@ def welcome_chat_picker_keyboard(chats: List[Dict[str, Any]]) -> InlineKeyboardM
     b.button(text="← Back", callback_data="menu:main")
     b.adjust(1)
     return b.as_markup()
+

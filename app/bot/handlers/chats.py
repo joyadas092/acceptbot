@@ -70,7 +70,10 @@ async def refresh_single_chat(callback: CallbackQuery, chat_repo):
     chat = await chat_repo.get(chat_id)
     if chat:
         text = f"💬 <b>{chat.get('title', 'Unknown Chat')}</b>\n\nStatus: {chat.get('status', 'Unknown')}\nSelect an action to configure:"
-        await callback.message.edit_text(text, reply_markup=chat_action_keyboard(chat_id))
+        try:
+            await callback.message.edit_text(text, reply_markup=chat_action_keyboard(chat_id))
+        except Exception:
+            pass  # Suppress "message is not modified" errors
 
 @router.callback_query(F.data.startswith('chat:disconnect:'))
 async def disconnect_chat(callback: CallbackQuery, chat_repo):

@@ -2,6 +2,7 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
+from datetime import datetime, timezone
 
 from ..filters.is_superadmin import IsSuperAdmin
 from ..keyboards.superadmin_menu import superadmin_main_keyboard, superadmin_stats_keyboard
@@ -86,7 +87,45 @@ async def admin_callbacks(callback: CallbackQuery, user_repo, chat_repo):
         )
         await callback.message.edit_text(text, reply_markup=superadmin_stats_keyboard())
     elif action == 'stats':
-        subaction = callback.data.split(':')[2]
-        if subaction == 'refresh':
-            await callback.answer("Refreshed (simulated).")
-            # Usually would reload the current stats panel
+        if len(callback.data.split(':')) > 2:
+            subaction = callback.data.split(':')[2]
+            if subaction == 'refresh':
+                await callback.answer("Refreshed.")
+    await callback.answer()
+
+
+@router.message(Command('dbcheck'))
+async def db_check(message: Message, join_request_repo, chat_repo, user_repo):
+    """Debug: show raw document counts from every collection."""
+    try:
+        total_jr = await join_request_repo.collection.count_documents({})
+        approved_jr = await join_request_repo.collection.count_documents({"status": "approved"})
+        pending_jr = await join_request_repo.collection.count_documents({"status": "pending"})
+        scheduled_jr = await join_request_repo.collection.count_documents({"status": "scheduled"})
+        total_users = await user_repo.collection.count_documents({})
+        total_chats = await chat_repo.collection.count_documents({})
+        total_settings = await chat_repo.settings_collection.count_documents({})
+
+        # Sample last 3 join_request docs
+        recent = await join_request_repo.collection.find(
+            {}, {"user_id": 1, "chat_id": 1, "status": 1, "created_at": 1}
+        ).sort("created_at", -1).limit(3).to_list(length=3)
+
+        sample_text = "\n".join(
+            f"  • user={r.get('user_id')} chat={r.get('chat_id')} status={r.get('status')}"
+            for r in recent
+        ) or "  (empty)"
+
+        await message.answer(
+            f"🗄 <b>Raw DB Counts</b>\n\n"
+            f"join_requests: {total_jr} total\n"
+            f"  approved: {approved_jr}\n"
+            f"  pending:  {pending_jr}\n"
+            f"  scheduled:{scheduled_jr}\n"
+            f"users:        {total_users}\n"
+            f"chats:        {total_chats}\n"
+            f"chat_settings:{total_settings}\n\n"
+            f"<b>Last 3 join_requests:</b>\n{sample_text}"
+        )
+    except Exception as e:
+        await message.answer(f"❌ DB check failed: {e}")

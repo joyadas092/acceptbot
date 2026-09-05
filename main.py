@@ -116,6 +116,16 @@ async def main() -> None:
     # Register middlewares (order matters: outer first)
     dp.message.middleware(LoggingMiddleware())
     dp.callback_query.middleware(LoggingMiddleware())
+    dp.message.middleware(DatabaseMiddleware(
+        db_manager.db,
+        UserRepository, ChatRepository, JoinRequestRepository,
+        BroadcastRepository, SubscriptionRepository,
+    ))
+    dp.callback_query.middleware(DatabaseMiddleware(
+        db_manager.db,
+        UserRepository, ChatRepository, JoinRequestRepository,
+        BroadcastRepository, SubscriptionRepository,
+    ))
     dp.message.middleware(ThrottlingMiddleware(UserCommandThrottler(redis_client)))
     dp.callback_query.middleware(ThrottlingMiddleware(UserCommandThrottler(redis_client)))
     dp.message.middleware(AuthMiddleware(settings, user_service))

@@ -10,7 +10,7 @@ class JoinRequestRepository:
     async def create(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         if 'created_at' not in request_data:
             request_data['created_at'] = datetime.now(timezone.utc)
-            
+
         try:
             await self.collection.insert_one(request_data)
             return request_data
@@ -21,6 +21,10 @@ class JoinRequestRepository:
                 "chat_id": request_data.get("chat_id"),
                 "user_id": request_data.get("user_id")
             })
+
+    # Aliases matching what handlers call
+    async def create_request(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.create(request_data)
 
     async def get_pending(self, chat_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         return await self.collection.find_one({

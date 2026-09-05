@@ -12,18 +12,34 @@ class ChatRepository:
     async def upsert_chat(self, chat_data: Dict[str, Any]) -> Dict[str, Any]:
         chat_id = chat_data['chat_id']
         now = datetime.now(timezone.utc)
-        
+
         update_doc = {
             "$set": {k: v for k, v in chat_data.items() if k != 'chat_id'},
             "$setOnInsert": {"created_at": now, "total_join_requests": 0, "total_approved": 0, "total_welcome_sent": 0}
         }
-        
+
         return await self.collection.find_one_and_update(
             {"chat_id": chat_id},
             update_doc,
             upsert=True,
             return_document=ReturnDocument.AFTER
         )
+
+    # Aliases matching what handlers/services call
+    async def upsert(self, chat_data: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.upsert_chat(chat_data)
+
+    async def get(self, chat_id: int) -> Optional[Dict[str, Any]]:
+        return await self.get_by_chat_id(chat_id)
+
+    async def get_by_admin(self, user_id: int) -> List[Dict[str, Any]]:
+        return await self.get_chats_by_connected_user(user_id)
+
+    async def count(self) -> int:
+        return await self.count_total()
+
+    async def update_settings(self, chat_id: int, settings_data: Dict[str, Any]) -> Dict[str, Any]:
+        return await self.upsert_settings(chat_id, settings_data)
 
     async def get_by_chat_id(self, chat_id: int) -> Optional[Dict[str, Any]]:
         return await self.collection.find_one({"chat_id": chat_id})

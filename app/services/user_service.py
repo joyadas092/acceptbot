@@ -28,11 +28,36 @@ class UserService:
             "is_active": True,
             "last_active_at": utcnow()
         }
-        
-        user_doc = await self.repo.upsert_user(user_data)
+
+        user_doc = await self.repo.upsert(user_data)
         if not user_doc:
             user_doc = await self.repo.get_by_telegram_id(telegram_user.id)
-            
+
+        return user_doc
+
+    async def register_or_update_user(
+        self,
+        user_id: int,
+        username: str | None = None,
+        first_name: str | None = None,
+        last_name: str | None = None,
+        language_code: str | None = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Backward-compat shim: accept keyword fields used by AuthMiddleware."""
+        user_data = {
+            "telegram_id": user_id,
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "language_code": language_code,
+            "is_bot": False,
+            "is_active": True,
+            "last_active_at": utcnow(),
+        }
+        user_doc = await self.repo.upsert(user_data)
+        if not user_doc:
+            user_doc = await self.repo.get_by_telegram_id(user_id)
         return user_doc
 
     async def get_user(self, telegram_id: int) -> Optional[Dict[str, Any]]:

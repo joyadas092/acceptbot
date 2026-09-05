@@ -36,6 +36,9 @@ class UserRepository:
     async def count_total(self) -> int:
         return await self.collection.count_documents({})
 
+    async def count(self) -> int:
+        return await self.count_total()
+
     async def count_by_status(self, status: str) -> int:
         return await self.collection.count_documents({"status": status})
 

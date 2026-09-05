@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 def chat_list_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
@@ -13,10 +13,10 @@ def chat_list_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
 
     builder.adjust(1)
 
-    # Bottom buttons
+    # Bottom buttons — InlineKeyboardButton instances, not builders.
     builder.row(
-        builder.button(text="🔄 Refresh", callback_data="menu:chats:refresh"),
-        builder.button(text="← Back", callback_data="menu:main")
+        InlineKeyboardButton(text="🔄 Refresh", callback_data="menu:chats:refresh"),
+        InlineKeyboardButton(text="← Back", callback_data="menu:main"),
     )
 
     return builder.as_markup()
@@ -37,7 +37,9 @@ def welcome_chat_picker_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
             callback_data=f"welcome:pick:{chat_id}",
         )
     builder.adjust(1)
-    builder.row(builder.button(text="← Cancel", callback_data="menu:main"))
+    builder.row(
+        InlineKeyboardButton(text="← Cancel", callback_data="menu:main"),
+    )
     return builder.as_markup()
 
 

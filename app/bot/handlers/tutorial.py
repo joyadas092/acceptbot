@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.filters import Command
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 router = Router()
@@ -115,7 +115,9 @@ def get_tutorial_keyboard(section: str) -> InlineKeyboardBuilder:
         row.append(builder.button(text="Next →", callback_data=f"tutorial:{current+1}"))
         
     builder.adjust(len(row))
-    builder.row(builder.button(text="← Exit Tutorial", callback_data="menu:main"))
+    builder.row(
+        InlineKeyboardButton(text="← Exit Tutorial", callback_data="menu:main"),
+    )
     return builder
 
 @router.message(Command('tutorial'))

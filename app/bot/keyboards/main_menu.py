@@ -23,9 +23,12 @@ def main_menu_keyboard(is_super_admin: bool = False) -> InlineKeyboardMarkup:
     builder.adjust(2, 2, 2, 2, 1)
 
     if is_super_admin:
-        builder.row(
-            builder.button(text="👑 Admin Panel", callback_data="admin:main")
-        )
+        # builder.button() returns the builder, not a button. The correct
+        # way to add a single button on its own row is to call .button()
+        # first, then .row() with no args — that just finalizes the
+        # current row.
+        builder.button(text="👑 Admin Panel", callback_data="admin:main")
+        builder.row()
 
     return builder.as_markup()
 

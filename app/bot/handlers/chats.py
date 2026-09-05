@@ -23,19 +23,26 @@ async def my_chats_handler(message: Message, chat_repo):
     )
 
 @router.callback_query(F.data == 'menu:chats')
+@router.callback_query(F.data == 'menu:chats:refresh')
+@router.callback_query(F.data == 'menu:refresh')
 async def chats_menu_callback(callback: CallbackQuery, chat_repo):
-    """Show chats from main menu."""
+    """Show chats from main menu. Also handles the Refresh button."""
     user_id = callback.from_user.id
     chats = await chat_repo.get_by_admin(user_id)
-    
+
     if not chats:
-        await callback.message.edit_text("You don't have any connected chats.")
+        await callback.answer("No connected chats yet.", show_alert=True)
+        await callback.message.edit_text(
+            "You don't have any connected chats yet.\n"
+            "Add me to a group/channel as admin to get started."
+        )
         return
-        
+
     await callback.message.edit_text(
         "Here are your connected chats:",
         reply_markup=chat_list_keyboard(chats)
     )
+    await callback.answer()
 
 @router.callback_query(F.data.startswith('chat:select:'))
 async def select_chat_callback(callback: CallbackQuery, chat_repo):

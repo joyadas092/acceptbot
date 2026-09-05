@@ -7,7 +7,8 @@ def chat_list_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
 
     for chat in chats:
         title = chat.get('title', 'Unknown Chat')
-        chat_id = chat.get('id')
+        # chats collection uses 'chat_id' as the key; older code read 'id'.
+        chat_id = chat.get('chat_id', chat.get('id'))
         builder.button(text=f"💬 {title} →", callback_data=f"chat:select:{chat_id}")
 
     builder.adjust(1)
@@ -30,7 +31,7 @@ def welcome_chat_picker_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for chat in chats:
         title = chat.get('title', 'Unknown Chat')
-        chat_id = chat.get('id')
+        chat_id = chat.get('chat_id', chat.get('id'))
         builder.button(
             text=f"💬 {title} →",
             callback_data=f"welcome:pick:{chat_id}",

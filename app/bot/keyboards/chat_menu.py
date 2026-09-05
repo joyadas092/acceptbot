@@ -1,0 +1,41 @@
+from aiogram.types import InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+def chat_list_keyboard(chats: list[dict]) -> InlineKeyboardMarkup:
+    """List of connected chats, each as a row with chat name."""
+    builder = InlineKeyboardBuilder()
+    
+    for chat in chats:
+        title = chat.get('title', 'Unknown Chat')
+        chat_id = chat.get('id')
+        builder.button(text=f"💬 {title} →", callback_data=f"chat:select:{chat_id}")
+        
+    builder.adjust(1)
+    
+    # Bottom buttons
+    builder.row(
+        builder.button(text="🔄 Refresh", callback_data="menu:chats:refresh"),
+        builder.button(text="← Back", callback_data="menu:main")
+    )
+    
+    return builder.as_markup()
+
+def chat_action_keyboard(chat_id: int) -> InlineKeyboardMarkup:
+    """Actions for a specific chat."""
+    builder = InlineKeyboardBuilder()
+    
+    # Row 1
+    builder.button(text="⚡ Approval", callback_data=f"settings:approval:{chat_id}")
+    builder.button(text="👋 Welcome", callback_data=f"settings:welcome:{chat_id}")
+    # Row 2
+    builder.button(text="🔘 Buttons", callback_data=f"settings:buttons:{chat_id}")
+    builder.button(text="📢 Broadcast", callback_data=f"broadcast:chat:{chat_id}")
+    # Row 3
+    builder.button(text="📊 Statistics", callback_data=f"stats:chat:{chat_id}")
+    builder.button(text="🔄 Refresh", callback_data=f"chat:refresh:{chat_id}")
+    # Row 4
+    builder.button(text="❌ Disconnect", callback_data=f"chat:disconnect:{chat_id}")
+    builder.button(text="← Back", callback_data="menu:chats")
+    
+    builder.adjust(2, 2, 2, 2)
+    return builder.as_markup()

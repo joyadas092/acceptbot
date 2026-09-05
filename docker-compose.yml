@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - botnet
+    # Note: In production, it is highly recommended to use an external managed MongoDB service
+    # (like MongoDB Atlas) or ensure robust security and backup configurations here.
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - botnet
+    # Note: Similarly, use an external managed Redis in production if possible.
+
+  bot:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      - mongodb
+      - redis
+    ports:
+      - "8000:8000"
+      - "8080:8080"
+      - "9090:9090"
+    networks:
+      - botnet
+
+  approval_worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "workers/run_approval_worker.py"]
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - botnet
+
+  broadcast_worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    command: ["python", "workers/run_broadcast_worker.py"]
+    depends_on:
+      - mongodb
+      - redis
+    networks:
+      - botnet
+
+volumes:
+  mongodb_data:
+  redis_data:
+
+networks:
+  botnet:
+    driver: bridge

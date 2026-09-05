@@ -110,8 +110,8 @@ async def main() -> None:
     dp['redis_client'] = redis_client
 
     # Build services used by middlewares
-    user_repo = UserRepository(db_manager.db) if db_manager.db else None
-    user_service = UserService(user_repo) if user_repo else None
+    user_repo = UserRepository(db_manager.db) if db_manager.db is not None else None
+    user_service = UserService(user_repo) if user_repo is not None else None
 
     # Register middlewares (order matters: outer first)
     dp.message.middleware(LoggingMiddleware())

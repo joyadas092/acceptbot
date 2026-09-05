@@ -7,13 +7,18 @@ class DatabaseManager:
         self.client: AsyncIOMotorClient | None = None
         self.db = None
 
-    async def connect(self, settings):
+    async def connect(self, mongo_uri: str = None, db_name: str = None, *, settings=None):
+        if settings is not None:
+            mongo_uri = mongo_uri or settings.mongodb_uri
+            db_name = db_name or settings.mongodb_database
+        if not mongo_uri or not db_name:
+            raise ValueError("mongo_uri and db_name are required")
         self.client = AsyncIOMotorClient(
-            settings.mongodb_uri,
+            mongo_uri,
             maxPoolSize=50,
             serverSelectionTimeoutMS=5000
         )
-        self.db = self.client[settings.mongodb_database]
+        self.db = self.client[db_name]
         
     async def disconnect(self):
         if self.client:

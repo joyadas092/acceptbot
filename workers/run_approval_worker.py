@@ -21,34 +21,30 @@ from app.core.logging import configure_logging, get_logger
 from app.database.connection import db_manager
 from redis.asyncio import Redis
 from app.workers.approval_worker import ApprovalWorker
-# Mocks/imports for services would be here. Assuming they exist in app.services
-# from app.services.approval_service import ApprovalService
-# from app.services.welcome_service import WelcomeService
-from unittest.mock import AsyncMock
+from app.services.approval_service import ApprovalService
+from app.services.welcome_service import WelcomeService
 
 async def main():
     settings = get_settings()
     configure_logging(settings)
     logger = get_logger('run_approval_worker')
-    
+
     logger.info("Initializing Approval Worker Process...")
-    
+
     # Connect DB
-    await db_manager.connect(settings.MONGODB_URI, settings.MONGODB_DB_NAME)
+    await db_manager.connect(settings.mongodb_uri, settings.mongodb_database)
     
     # Connect Redis
-    redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
-    
+    redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
+
     # Instantiate services
-    # approval_service = ApprovalService(db_manager.db, redis_client)
-    # welcome_service = WelcomeService(db_manager.db, redis_client)
-    approval_service = AsyncMock() # Replace with actual service instantiation
-    welcome_service = AsyncMock()
-    
+    approval_service = ApprovalService(db_manager.db, redis_client)
+    welcome_service = WelcomeService(db_manager.db, redis_client)
+
     worker = ApprovalWorker(
         approval_service=approval_service,
         welcome_service=welcome_service,
-        poll_interval=settings.APPROVAL_POLL_INTERVAL
+        poll_interval=settings.approval_poll_interval
     )
     
     # Graceful shutdown handler

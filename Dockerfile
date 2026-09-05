@@ -14,6 +14,9 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Install curl for HEALTHCHECK
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Copy installed site-packages from builder
 COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
@@ -23,14 +26,14 @@ RUN useradd -m botuser && chown -R botuser /app
 USER botuser
 
 # Copy application source code
-COPY . .
+COPY --chown=botuser:botuser . .
 
 # Expose ports for webhooks, health checks, and metrics
 EXPOSE 8000 8080 9090
 
 # Healthcheck targeting the /health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:8080/health || exit 1
+  CMD curl -f http://localhost:8000/health || exit 1
 
 # Default command to run the main bot
 CMD ["python", "main.py"]

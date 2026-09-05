@@ -28,6 +28,10 @@ async def bot_chat_member_updated(
     added_by = event.from_user
 
     if new_status in ('administrator', 'creator'):
+        logger.info("my_chat_member: bot became admin",
+                    chat_id=chat.id, chat_title=chat.title,
+                    new_status=new_status, old_status=old_status,
+                    added_by=added_by.id if added_by else None)
         try:
             chat_data = {
                 "chat_id": chat.id,
@@ -37,11 +41,15 @@ async def bot_chat_member_updated(
                 "status": "connected",
             }
             await chat_repo.upsert(chat_data)
+            logger.info("my_chat_member: chat upserted",
+                        chat_id=chat.id, title=chat.title)
             # Also record the adder in chat_admins so get_by_admin(user_id)
             # returns this chat. Without this, /welcome shows "no chats".
             if added_by:
                 try:
                     await chat_repo.upsert_admin(chat.id, added_by.id)
+                    logger.info("my_chat_member: admin upserted",
+                                chat_id=chat.id, user_id=added_by.id)
                 except Exception as e:
                     logger.warning("Failed to upsert admin",
                                    chat_id=chat.id, user_id=added_by.id,

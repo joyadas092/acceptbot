@@ -2,19 +2,24 @@ from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
 from ..keyboards.chat_menu import chat_list_keyboard, chat_action_keyboard
+from app.core.logging import get_logger
 
 router = Router()
+logger = get_logger('settings')
+
 
 @router.message(Command('settings'))
 async def settings_command(message: Message, chat_repo):
     """Show settings for all connected chats or prompt to select one."""
     user_id = message.from_user.id
     chats = await chat_repo.get_by_admin(user_id)
-    
+    logger.info("settings_command", user_id=user_id, chat_count=len(chats),
+                chat_ids=[c.get('chat_id') for c in chats])
+
     if not chats:
         await message.answer("You don't have any connected chats. Please add the bot to a chat first.")
         return
-        
+
     await message.answer(
         "Select a chat to view its settings:",
         reply_markup=chat_list_keyboard(chats)

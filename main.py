@@ -55,11 +55,32 @@ async def setup_bot(bot: Bot, settings, db_manager, redis_client) -> None:
             webhook_url = None
 
         if webhook_url:
+            # Telegram's default allowed_updates does NOT include
+            # my_chat_member / chat_member / chat_join_request, so the bot
+            # would silently never see "bot added/removed as admin" events
+            # and the chats collection would stay empty. Explicitly opt in.
+            allowed_updates = [
+                "message",
+                "edited_message",
+                "channel_post",
+                "edited_channel_post",
+                "callback_query",
+                "my_chat_member",
+                "chat_member",
+                "chat_join_request",
+            ]
             if settings.webhook_secret:
-                await bot.set_webhook(url=webhook_url, secret_token=settings.webhook_secret)
+                await bot.set_webhook(
+                    url=webhook_url,
+                    secret_token=settings.webhook_secret,
+                    allowed_updates=allowed_updates,
+                )
             else:
-                await bot.set_webhook(url=webhook_url)
-            logger.info("Webhook set", url=webhook_url)
+                await bot.set_webhook(
+                    url=webhook_url,
+                    allowed_updates=allowed_updates,
+                )
+            logger.info("Webhook set", url=webhook_url, allowed_updates=allowed_updates)
         else:
             logger.warning(
                 "No WEBHOOK_URL or WEBHOOK_HOST set — bot will not receive Telegram updates"

@@ -20,7 +20,7 @@ class AuthMiddleware(BaseMiddleware):
     ) -> Any:
         user = data.get('event_from_user')
         if user and not user.is_bot:
-            is_super_admin = user.id in self.settings.super_admin_ids
+            is_super_admin = user.id in self.settings.super_admin_id_list
             data['is_super_admin'] = is_super_admin
             
             # Register/update user in background

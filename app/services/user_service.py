@@ -53,9 +53,9 @@ class UserService:
         )
 
     async def is_super_admin(self, telegram_id: int) -> bool:
-        """Check against settings.super_admin_ids — primary check.
+        """Check against settings.super_admin_id_list — primary check.
            Falls back to DB flag as secondary."""
-        if telegram_id in self.settings.SUPER_ADMIN_IDS:
+        if telegram_id in self.settings.super_admin_id_list:
             return True
             
         user = await self.get_user(telegram_id)

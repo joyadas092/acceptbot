@@ -10,4 +10,4 @@ class IsSuperAdmin(BaseFilter):
 
     async def __call__(self, message: Message, **data) -> bool:
         user = message.from_user
-        return user and user.id in self.settings.super_admin_ids
+        return user and user.id in self.settings.super_admin_id_list

@@ -23,6 +23,11 @@ from redis.asyncio import Redis
 from app.workers.approval_worker import ApprovalWorker
 from app.services.approval_service import ApprovalService
 from app.services.welcome_service import WelcomeService
+from app.services.telegram_service import TelegramService
+from app.services.rate_limiter import TelegramRateLimiter
+from app.database.repositories import JoinRequestRepository, ChatRepository
+from aiogram import Bot
+from aiogram.client.default import DefaultBotProperties
 
 async def main():
     settings = get_settings()
@@ -33,13 +38,32 @@ async def main():
 
     # Connect DB
     await db_manager.connect(settings.mongodb_uri, settings.mongodb_database)
-    
+
     # Connect Redis
     redis_client = Redis.from_url(settings.redis_url, decode_responses=True)
 
-    # Instantiate services
-    approval_service = ApprovalService(db_manager.db, redis_client)
-    welcome_service = WelcomeService(db_manager.db, redis_client)
+    # Create Bot (needed for Telegram API)
+    bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode='HTML'))
+
+    # Repositories
+    join_request_repo = JoinRequestRepository(db_manager.db)
+    chat_repo = ChatRepository(db_manager.db)
+
+    # Services
+    rate_limiter = TelegramRateLimiter(redis_client)
+    telegram_service = TelegramService(bot, rate_limiter)
+    welcome_service = WelcomeService(
+        join_request_repo=join_request_repo,
+        chat_repo=chat_repo,
+        telegram_service=telegram_service,
+    )
+    approval_service = ApprovalService(
+        join_request_repo=join_request_repo,
+        chat_repo=chat_repo,
+        telegram_service=telegram_service,
+        welcome_service=welcome_service,
+        redis_client=redis_client,
+    )
 
     worker = ApprovalWorker(
         approval_service=approval_service,
@@ -57,7 +81,10 @@ async def main():
         stop_event.set()
         
     for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+        try:
+            loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+        except NotImplementedError:
+            pass  # Windows doesn't support add_signal_handler
         
     logger.info("Starting Approval Worker...")
     worker_task = asyncio.create_task(worker.start())
@@ -66,6 +93,7 @@ async def main():
     await worker_task
     
     # Cleanup
+    await bot.session.close()
     await redis_client.aclose()
     await db_manager.disconnect()
     logger.info("Approval Worker Process shut down successfully.")

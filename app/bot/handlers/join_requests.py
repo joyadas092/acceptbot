@@ -2,7 +2,11 @@ from aiogram import Router, Bot, F
 from aiogram.types import ChatJoinRequest, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.core.logging import get_logger
+
 router = Router()
+logger = get_logger('join_requests')
+
 
 @router.chat_join_request()
 async def handle_join_request(
@@ -15,10 +19,15 @@ async def handle_join_request(
     Main join request handler.
 
     Two modes (driven by chat_settings.captcha_enabled):
-    - Captcha OFF (default): record the request; the approval worker / on_request
-      pipeline takes over.
-    - Captcha ON: DM the user an "I'm not a robot" button. Approval only happens
-      when they click it. Pending request is stored so a click can resolve it.
+    - Captcha OFF (default): record + approve immediately via Telegram API.
+    - Captcha ON: DM the user an "I'm not a robot" button. Approval only
+      happens when they click it.
+
+    NOTE: previously this handler only stored the request and relied on
+    the approval worker to do the Telegram call. The worker only picks
+    up requests with `scheduled_for` set — for delay=0 there was no
+    trigger at all, so users were silently never approved. Approve
+    inline here (the Telegram API is fast and idempotent).
     """
     user_id = event.from_user.id
     chat_id = event.chat.id
@@ -35,34 +44,52 @@ async def handle_join_request(
         "captcha_required": captcha_enabled,
     })
 
-    if not captcha_enabled:
-        # Auto-approval path — leave to the approval worker / existing flow
+    if captcha_enabled:
+        # DM the user with a verification button
+        try:
+            builder = InlineKeyboardBuilder()
+            builder.button(
+                text="✅ I'm not a robot",
+                callback_data=f"captcha:verify:{chat_id}:{user_id}",
+            )
+            chat_title = event.chat.title or "the group"
+            await bot.send_message(
+                chat_id=user_id,
+                text=(
+                    f"Hello <b>{event.from_user.first_name or ''}</b>,\n\n"
+                    f"To join <b>{chat_title}</b> confirm that you are not a robot "
+                    f"by tapping the button below. ⬇️"
+                ),
+                reply_markup=builder.as_markup(),
+            )
+        except Exception as e:
+            # User has not started the bot — Telegram won't let us DM.
+            # Fall back to auto-approve so they aren't locked out.
+            logger.warning("Captcha DM failed, falling back to auto-approve",
+                           chat_id=chat_id, user_id=user_id, error=str(e))
+            try:
+                await bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+                await join_request_repo.update(
+                    {"user_id": user_id, "chat_id": chat_id},
+                    {"status": "approved", "captcha_required": False},
+                )
+            except Exception as e2:
+                logger.error("Auto-approve fallback failed",
+                             chat_id=chat_id, user_id=user_id, error=str(e2))
         return
 
-    # Captcha path — DM the user with a verification button
+    # Captcha OFF path: approve immediately.
     try:
-        builder = InlineKeyboardBuilder()
-        builder.button(
-            text="✅ I'm not a robot",
-            callback_data=f"captcha:verify:{chat_id}:{user_id}",
-        )
-        chat_title = event.chat.title or "the group"
-        await bot.send_message(
-            chat_id=user_id,
-            text=(
-                f"Hello <b>{event.from_user.first_name or ''}</b>,\n\n"
-                f"To join <b>{chat_title}</b> confirm that you are not a robot "
-                f"by tapping the button below. ⬇️"
-            ),
-            reply_markup=builder.as_markup(),
-        )
-    except Exception:
-        # User has not started the bot — Telegram won't let us DM. Fall back to
-        # auto-approve so they aren't locked out.
+        await bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
         await join_request_repo.update(
-            {"user_id": user_id, "chat_id": chat_id, "status": "pending"},
-            {"captcha_required": False},
+            {"user_id": user_id, "chat_id": chat_id},
+            {"status": "approved"},
         )
+        logger.info("Join request approved",
+                    chat_id=chat_id, user_id=user_id)
+    except Exception as e:
+        logger.error("Failed to approve join request",
+                     chat_id=chat_id, user_id=user_id, error=str(e))
 
 
 @router.callback_query(lambda c: c.data and c.data.startswith("captcha:verify:"))

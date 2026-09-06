@@ -59,10 +59,8 @@ async def main():
     approval_service = ApprovalService(
         join_request_repo=join_request_repo,
         chat_repo=chat_repo,
-        user_repo=user_repo,
-        welcome_service=welcome_service,
         telegram_service=telegram_service,
-        entitlement_service=entitlement_service,
+        welcome_service=welcome_service,
         redis_client=redis_client,
     )
 

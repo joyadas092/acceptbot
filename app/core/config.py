@@ -48,6 +48,17 @@ class Settings(BaseSettings):
             return ','.join(str(x) for x in v)
         return str(v)
 
+    @field_validator('environment', mode='before')
+    @classmethod
+    def strip_environment_comment(cls, v) -> str:
+        """Railway env vars copied from .env.example can carry inline
+        comments like 'production  # production or development'. Strip
+        anything after a '#', then whitespace, so is_production works."""
+        if v is None:
+            return 'development'
+        s = str(v).split('#', 1)[0].strip().lower()
+        return s or 'development'
+
     @property
     def super_admin_id_list(self) -> list[int]:
         """Parsed list of super admin telegram IDs."""

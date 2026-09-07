@@ -67,7 +67,7 @@ async def main() -> None:
         subscription_repo_class=SubscriptionRepository,
     )
     dp.update.outer_middleware(db_middleware)
-    dp.update.outer_middleware(AuthMiddleware(settings.super_admin_ids))
+    dp.update.outer_middleware(AuthMiddleware(settings.super_admin_id_list))
     dp.update.middleware(ThrottlingMiddleware(redis_client))
     dp.update.middleware(LoggingMiddleware())
 
